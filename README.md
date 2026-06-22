@@ -62,3 +62,15 @@ python3 -m http.server 8080
 ```
 
 Después abre `http://localhost:8080`.
+
+## Mejora de claridad/carga del mapa
+
+Esta versión optimiza las capas IGN/PNOA para que el plano cargue menos a trozos:
+
+- El Service Worker ya no guarda en caché las teselas externas del mapa, evitando mapas incompletos o antiguos.
+- Las capas usan mayor margen de precarga alrededor de la vista visible.
+- Se desactiva la recarga agresiva durante zoom/movimiento para reducir cortes.
+- Se añade un indicador breve de carga del mapa.
+- PNOA permite zoom alto con teselas nativas hasta nivel 19.
+
+Si al sustituir los archivos sigues viendo trozos antiguos, cierra la app/web, vuelve a abrirla y recarga una vez para que se active el Service Worker `seccion-c2-v3`.
