@@ -63,14 +63,8 @@ python3 -m http.server 8080
 
 Después abre `http://localhost:8080`.
 
-## Mejora de claridad/carga del mapa
+## Mejora de mapas y posición
 
-Esta versión optimiza las capas IGN/PNOA para que el plano cargue menos a trozos:
+Esta versión evita cachear teselas externas del mapa en el Service Worker para que no se queden cuadrados incompletos o lentos al cargar. También aumenta el buffer de teselas alrededor de la vista y añade un marcador triangular para la posición propia. El triángulo usa el rumbo del GPS cuando está disponible y la brújula del dispositivo cuando el navegador lo permite.
 
-- El Service Worker ya no guarda en caché las teselas externas del mapa, evitando mapas incompletos o antiguos.
-- Las capas usan mayor margen de precarga alrededor de la vista visible.
-- Se desactiva la recarga agresiva durante zoom/movimiento para reducir cortes.
-- Se añade un indicador breve de carga del mapa.
-- PNOA permite zoom alto con teselas nativas hasta nivel 19.
-
-Si al sustituir los archivos sigues viendo trozos antiguos, cierra la app/web, vuelve a abrirla y recarga una vez para que se active el Service Worker `seccion-c2-v3`.
+Si al sustituir los archivos el mapa sigue viéndose raro, abre la app una vez con conexión y recarga/actualiza para que el navegador instale el nuevo `sw.js`.
