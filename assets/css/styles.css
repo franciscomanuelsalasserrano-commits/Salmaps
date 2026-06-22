@@ -2,3 +2,16 @@
 
 /* Parche serio mapas/GPS */
 .leaflet-container{background:#0b100d;}.leaflet-tile{will-change:transform;backface-visibility:hidden;}.leaflet-tile-loaded{opacity:1!important}.map-loading #map::after{content:"Cargando plano…";position:absolute;z-index:650;left:50%;top:14px;transform:translateX(-50%);background:rgba(7,10,8,.88);border:1px solid rgba(158,181,93,.55);color:#f2f6e9;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none}.user-position-icon{background:transparent!important;border:0!important}.user-triangle{width:42px;height:42px;display:grid;place-items:center;transform:rotate(var(--heading));filter:drop-shadow(0 4px 8px rgba(0,0,0,.9))}.user-triangle span{width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-bottom:30px solid #1677ff;display:block;position:relative}.user-triangle span::before{content:"";position:absolute;left:-16px;top:-5px;width:32px;height:32px;border:3px solid rgba(22,119,255,.45);border-radius:50%;transform:rotate(calc(-1 * var(--heading)))}.user-triangle span::after{content:"";position:absolute;left:-7px;top:8px;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:17px solid #fff}.gps-status{font-size:12px;color:var(--accent2);margin-top:2px}.gps-status.bad{color:#ff8b7d}.position-card{z-index:720}.map-toolbar{z-index:730}.leaflet-pane.userPane{z-index:700!important}.leaflet-pane.accuracyPane{z-index:650!important}
+
+/* Parche definitivo: evita huecos negros y fuerza marcador GPS visible */
+.leaflet-container{background:#d8dccf!important;}
+.leaflet-pane,.leaflet-tile-pane{transform:translateZ(0);}
+.leaflet-tile{background:transparent!important;image-rendering:auto;}
+.leaflet-tile-container{will-change:transform;}
+.leaflet-pane.leaflet-user-pane{z-index:900!important;pointer-events:none!important;}
+.leaflet-pane.leaflet-accuracy-pane{z-index:650!important;pointer-events:none!important;}
+.leaflet-pane.leaflet-underlay-pane{z-index:180!important;}
+.leaflet-pane.leaflet-aerial-pane{z-index:210!important;}
+.user-position-icon{width:56px!important;height:56px!important;background:transparent!important;border:0!important;display:block!important;opacity:1!important;z-index:10000!important;}
+.user-position-icon .gps-svg{width:56px;height:56px;display:block;filter:drop-shadow(0 4px 8px rgba(0,0,0,.85));transform-origin:50% 50%;}
+.gps-status{font-size:12px;color:var(--accent2);font-weight:700;margin-top:2px;max-width:220px}.gps-status.bad{color:#ff8b7d}.position-card{z-index:880!important}.map-toolbar{z-index:875!important}.map-loading #map::after{content:"Cargando plano… si falta alguna foto se verá el plano rápido debajo";max-width:90vw;text-align:center;}
