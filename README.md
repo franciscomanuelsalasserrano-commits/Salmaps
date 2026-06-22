@@ -2,7 +2,7 @@
 
 Prototipo web/PWA, pensado para GitHub Pages, de una aplicación de mando y control de nivel sección centrada en:
 
-- mapa desplegable OpenStreetMap;
+- mapa desplegable con OpenStreetMap, capa IGN España y vista aérea PNOA;
 - posición GPS y seguimiento local;
 - puntos tácticos sobre el mapa;
 - chat almacenado localmente;
@@ -23,7 +23,7 @@ La geolocalización y el service worker requieren HTTPS. GitHub Pages sirve el s
 
 ## Uso
 
-- **Mapa:** permite centrar la posición, activar seguimiento y colocar puntos.
+- **Mapa:** permite centrar la posición, activar seguimiento, colocar puntos y cambiar la capa base desde el selector «Capa». La opción elegida se guarda en el navegador.
 - **Chat:** conserva los mensajes únicamente en el navegador actual.
 - **Documentos:** guarda archivos con IndexedDB en el navegador actual.
 - **Ajustes:** cambia indicativo/unidad y exporta o importa datos JSON.
@@ -36,7 +36,7 @@ Este proyecto es un **prototipo frontend sin backend**:
 - no incluye autenticación;
 - no incorpora cifrado de extremo a extremo;
 - los archivos y mensajes permanecen en el navegador local;
-- las teselas del mapa base requieren conexión, salvo las que el navegador haya almacenado previamente;
+- las teselas del mapa base requieren conexión, salvo las que el navegador haya almacenado previamente; las capas IGN/PNOA dependen de los servicios públicos del IGN y están orientadas a España;
 - no está auditado ni homologado para uso militar, emergencias o información sensible.
 
 No debe emplearse con información clasificada, datos operativos reales o información cuya filtración pueda causar daños.
