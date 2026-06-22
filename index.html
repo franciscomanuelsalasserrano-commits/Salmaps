@@ -28,6 +28,13 @@
         <button id="locateBtn" class="action primary">◎ Mi posición</button>
         <button id="trackBtn" class="action">Iniciar seguimiento</button>
         <button id="addMarkerBtn" class="action">Añadir punto</button>
+        <label class="map-layer-picker">Capa
+          <select id="mapLayerSelect" aria-label="Seleccionar capa de mapa">
+            <option value="osm">OpenStreetMap</option>
+            <option value="ign">IGN España</option>
+            <option value="aerial">Vista aérea PNOA</option>
+          </select>
+        </label>
       </div>
       <aside id="positionCard" class="position-card">
         <strong>Posición</strong>
