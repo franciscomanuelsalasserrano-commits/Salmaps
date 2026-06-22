@@ -62,9 +62,3 @@ python3 -m http.server 8080
 ```
 
 Después abre `http://localhost:8080`.
-
-## Mejora de mapas y posición
-
-Esta versión evita cachear teselas externas del mapa en el Service Worker para que no se queden cuadrados incompletos o lentos al cargar. También aumenta el buffer de teselas alrededor de la vista y añade un marcador triangular para la posición propia. El triángulo usa el rumbo del GPS cuando está disponible y la brújula del dispositivo cuando el navegador lo permite.
-
-Si al sustituir los archivos el mapa sigue viéndose raro, abre la app una vez con conexión y recarga/actualiza para que el navegador instale el nuevo `sw.js`.
