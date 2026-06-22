@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101713">
+  <meta name="description" content="Prototipo PWA de mando y control para una sección: mapa, mensajería y documentos.">
+  <title>SECCIÓN C2</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icons/icon-192.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynht6kPZQTVkZOempYfAs5B4zOqc=" crossorigin="">
+  <link rel="stylesheet" href="./assets/css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">C2</div>
+      <div><strong>SECCIÓN C2</strong><span id="unitLabel">Puesto de mando</span></div>
+    </div>
+    <div class="status"><span id="onlineDot" class="dot"></span><span id="onlineText">Comprobando red</span></div>
+  </header>
+
+  <main>
+    <section id="view-map" class="view active" aria-label="Mapa">
+      <div id="map"></div>
+      <div class="map-toolbar">
+        <button id="locateBtn" class="action primary">◎ Mi posición</button>
+        <button id="trackBtn" class="action">Iniciar seguimiento</button>
+        <button id="addMarkerBtn" class="action">Añadir punto</button>
+      </div>
+      <aside id="positionCard" class="position-card">
+        <strong>Posición</strong>
+        <span id="coords">Sin datos GPS</span>
+        <span id="accuracy">Precisión: —</span>
+      </aside>
+    </section>
+
+    <section id="view-chat" class="view panel-view" aria-label="Chat">
+      <div class="section-head"><div><h1>Chat de sección</h1><p>Mensajes guardados en este dispositivo</p></div><button id="clearChatBtn" class="ghost danger">Vaciar</button></div>
+      <div id="messageList" class="message-list" aria-live="polite"></div>
+      <form id="chatForm" class="composer">
+        <input id="chatInput" maxlength="1000" autocomplete="off" placeholder="Escribe un mensaje…" required>
+        <button class="send" type="submit">Enviar</button>
+      </form>
+    </section>
+
+    <section id="view-docs" class="view panel-view" aria-label="Documentos">
+      <div class="section-head"><div><h1>Documentos</h1><p>Órdenes, croquis, partes y archivos</p></div><label class="upload">+ Subir<input id="fileInput" type="file" multiple hidden></label></div>
+      <div id="dropZone" class="drop-zone">Arrastra archivos aquí o pulsa «Subir»<small>Almacenamiento local del navegador</small></div>
+      <div id="documentList" class="document-list"></div>
+    </section>
+
+    <section id="view-settings" class="view panel-view" aria-label="Ajustes">
+      <div class="section-head"><div><h1>Ajustes</h1><p>Identidad local y copia de seguridad</p></div></div>
+      <form id="settingsForm" class="settings-card">
+        <label>Indicativo<input id="callsignInput" maxlength="30" placeholder="Ej. Alfa 1"></label>
+        <label>Unidad<input id="unitInput" maxlength="60" placeholder="Ej. 1.ª Sección"></label>
+        <button class="action primary" type="submit">Guardar ajustes</button>
+      </form>
+      <div class="settings-card">
+        <h2>Datos</h2>
+        <p>Exporta mensajes, puntos y ajustes. Los documentos se conservan por separado en el navegador.</p>
+        <div class="button-row"><button id="exportBtn" class="action">Exportar JSON</button><label class="action file-action">Importar JSON<input id="importInput" type="file" accept="application/json" hidden></label></div>
+      </div>
+      <div class="settings-card warning"><h2>Importante</h2><p>Este repositorio es un prototipo sin servidor. No ofrece chat entre dispositivos ni cifrado de extremo a extremo. No debe usarse para información clasificada, sensible ni operaciones reales.</p></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="Navegación principal">
+    <button class="nav-btn active" data-view="map"><span>⌖</span>Mapa</button>
+    <button class="nav-btn" data-view="chat"><span>▣</span>Chat</button>
+    <button class="nav-btn" data-view="docs"><span>▤</span>Documentos</button>
+    <button class="nav-btn" data-view="settings"><span>⚙</span>Ajustes</button>
+  </nav>
+
+  <dialog id="markerDialog">
+    <form id="markerForm" method="dialog">
+      <h2>Nuevo punto</h2>
+      <label>Nombre<input id="markerName" maxlength="50" required placeholder="Ej. Punto de reunión"></label>
+      <label>Tipo<select id="markerType"><option value="friendly">Propio</option><option value="objective">Objetivo</option><option value="warning">Alerta</option><option value="medical">Sanidad</option></select></label>
+      <p id="markerHint">Pulsa después sobre el mapa para situarlo.</p>
+      <div class="dialog-actions"><button value="cancel" class="action">Cancelar</button><button id="confirmMarker" value="default" class="action primary">Continuar</button></div>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="./assets/js/app.js"></script>
+</body>
+</html>
