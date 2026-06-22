@@ -7,7 +7,13 @@ function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>
 function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión'}
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
-const map=L.map('map',{zoomControl:false}).setView([40.4168,-3.7038],6);L.control.zoom({position:'bottomright'}).addTo(map);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const map=L.map('map',{zoomControl:false}).setView([40.4168,-3.7038],6);L.control.zoom({position:'bottomright'}).addTo(map);
+const baseLayers={
+  'Mapa base':L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}),
+  'Vista aérea':L.tileLayer('https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=OI.OrthoimageCoverage&STYLE=default&FORMAT=image/jpeg&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',{minZoom:1,maxZoom:20,tileSize:256,attribution:'&copy; Instituto Geográfico Nacional · PNOA'}),
+  'IGN cartografía':L.tileLayer('https://www.ign.es/wmts/ign-base?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=IGNBaseTodo&STYLE=default&FORMAT=image/jpeg&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',{minZoom:1,maxZoom:20,tileSize:256,attribution:'&copy; Instituto Geográfico Nacional'})
+};
+const savedBaseLayer=localStorage.getItem('c2-base-layer')||'Mapa base';(baseLayers[savedBaseLayer]||baseLayers['Mapa base']).addTo(map);L.control.layers(baseLayers,null,{position:'topright',collapsed:true}).addTo(map);map.on('baselayerchange',e=>localStorage.setItem('c2-base-layer',e.name));
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
 function drawMarkers(){state.markers.forEach(m=>L.marker([m.lat,m.lng],{icon:iconFor(m.type)}).addTo(map).bindPopup(`<strong>${escapeHtml(m.name)}</strong><br>${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`))}drawMarkers();
 function updatePosition(pos,center=true){const{latitude:lat,longitude:lng,accuracy}=pos.coords;$('#coords').textContent=`${lat.toFixed(6)}, ${lng.toFixed(6)}`;$('#accuracy').textContent=`Precisión: ±${Math.round(accuracy)} m`;if(state.userMarker)state.userMarker.setLatLng([lat,lng]);else state.userMarker=L.circleMarker([lat,lng],{radius:8,color:'#fff',weight:3,fillColor:'#4a8ee8',fillOpacity:1}).addTo(map).bindPopup('Mi posición');if(state.accuracyCircle)state.accuracyCircle.setLatLng([lat,lng]).setRadius(accuracy);else state.accuracyCircle=L.circle([lat,lng],{radius:accuracy,color:'#4a8ee8',weight:1,fillOpacity:.08}).addTo(map);if(center)map.setView([lat,lng],Math.max(map.getZoom(),16))}
