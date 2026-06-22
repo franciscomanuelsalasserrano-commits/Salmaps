@@ -62,3 +62,17 @@ python3 -m http.server 8080
 ```
 
 Después abre `http://localhost:8080`.
+
+## Parche definitivo mapas/GPS
+
+Este parche cambia la carga de mapas para que no queden huecos negros al ampliar:
+
+- La capa por defecto pasa a ser **Híbrida rápida**: usa un plano rápido debajo y la ortofoto encima. Si una tesela aérea tarda o falla, se ve el plano inferior en vez de un cuadrado negro.
+- Se elimina la tesela negra/transparente de error que podía dejar bloques sin cargar.
+- Se reduce la cantidad de teselas simultáneas para móviles.
+- Se fuerza `invalidateSize` tras zoom, movimiento y redimensionado.
+- El marcador GPS ahora es un SVG grande en una capa superior, además de un punto azul de respaldo.
+- El seguimiento centra el mapa en la posición en cada actualización.
+- Service Worker v5: limpia caché antigua y no cachea mapas externos.
+
+Tras sustituir los archivos, abre la web y haz recarga completa. Si sigue cargando la versión vieja, borra datos del sitio en Chrome para `commits.github.io` o abre en ventana nueva.
