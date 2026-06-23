@@ -1,133 +1,89 @@
 import{saveDocument,listDocuments,deleteDocument}from'./db.js';
 const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s)];
-const state={settings:JSON.parse(localStorage.getItem('c2-settings')||'{"callsign":"Jefe de sección","unit":"Puesto de mando"}'),messages:JSON.parse(localStorage.getItem('c2-messages')||'[]'),markers:JSON.parse(localStorage.getItem('c2-markers')||'[]'),pendingMarker:null,watchId:null,userMarker:null,accuracyCircle:null,lastHeading:0,lastUserLatLng:null,lastUserAccuracy:null,activeMapLayer:null};
+const state={settings:JSON.parse(localStorage.getItem('c2-settings')||'{"callsign":"Jefe de sección","unit":"Puesto de mando"}'),messages:JSON.parse(localStorage.getItem('c2-messages')||'[]'),markers:JSON.parse(localStorage.getItem('c2-markers')||'[]'),pendingMarker:null,watchId:null,userMarker:null,lastHeading:0,activeLayerKey:null};
 const persist=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 
-let map;
-function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>{map.invalidateSize(true);activeLayer?.refreshNow()},160)}))}
-function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión'}
-window.addEventListener('online',()=>{updateNetwork();activeLayer?.refreshNow()});window.addEventListener('offline',updateNetwork);
-
+let map;let activeTileLayer=null;let prefetchTimer=null;
 const TRANSPARENT_TILE='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const MAP_LAYERS={
   ign:{label:'IGN topográfico',url:'https://tms-mapa-raster.ign.es/1.0.0/mapa-raster/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / CNIG',maxNativeZoom:18},
   pnoa:{label:'Vista aérea PNOA',url:'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / PNOA',maxNativeZoom:18}
 };
-let activeLayer=null,attributionControl=null;
 
-class FastIgnTileLayer{
-  constructor(config){this.config=config;this.map=null;this.layer=null;this.prefetchDone=new Set();this.boundPrefetch=()=>this.prefetchVisibleTiles(2);}
-  addTo(mapInstance){
-    this.map=mapInstance;
-    this.layer=L.tileLayer(this.config.url,{
-      attribution:this.config.attribution,
-      minZoom:3,
-      maxZoom:20,
-      maxNativeZoom:this.config.maxNativeZoom||18,
-      tileSize:256,
-      detectRetina:false,
-      updateWhenIdle:false,
-      updateWhenZooming:false,
-      keepBuffer:8,
-      crossOrigin:true,
-      noWrap:true,
-      errorTileUrl:TRANSPARENT_TILE,
-      className:'ign-fast-tile'
-    });
-    this.layer.on('tileerror',e=>this.retryTile(e));
-    this.layer.on('load',()=>this.prefetchVisibleTiles(2));
-    this.layer.addTo(this.map);
-    this.map.on('moveend zoomend resize',this.boundPrefetch);
-    setTimeout(()=>this.prefetchVisibleTiles(3),250);
-    return this;
-  }
-  remove(){
-    if(!this.map)return;
-    this.map.off('moveend zoomend resize',this.boundPrefetch);
-    if(this.layer){this.layer.off();this.map.removeLayer(this.layer)}
-    this.layer=null;this.map=null;this.prefetchDone.clear();
-  }
-  refreshNow(){
-    if(!this.map||!this.layer)return;
-    this.prefetchDone.clear();
-    this.layer.redraw();
-    setTimeout(()=>this.prefetchVisibleTiles(3),120);
-  }
-  preloadAndMove(center,zoom,onDone){
-    if(!this.map)return false;
-    this.map.setView(center,zoom,{animate:false});
-    setTimeout(()=>{this.prefetchVisibleTiles(3);if(onDone)onDone();},160);
-    return true;
-  }
-  retryTile(e){
-    const tile=e?.tile;if(!tile)return;
-    if(tile.dataset.retryDone==='1'){tile.style.visibility='hidden';return}
-    tile.dataset.retryDone='1';
-    const original=tile.src;
-    setTimeout(()=>{tile.style.visibility='';tile.src=original+(original.includes('?')?'&':'?')+'retry='+Date.now()},500);
-  }
-  tileUrl(x,y,z){
-    const limit=Math.pow(2,z)-1;
-    const invY=limit-y;
-    return this.config.url.replace('{z}',z).replace('{x}',x).replace('{-y}',invY).replace('{y}',y);
-  }
-  prefetchVisibleTiles(extra=2){
-    if(!this.map||!this.layer||!navigator.onLine)return;
-    const z=Math.round(this.map.getZoom());
-    if(z<3||z>18)return;
-    const tileSize=256;
-    const bounds=this.map.getPixelBounds();
-    const min=bounds.min.divideBy(tileSize).floor().subtract([extra,extra]);
-    const max=bounds.max.divideBy(tileSize).floor().add([extra,extra]);
-    const limit=Math.pow(2,z)-1;
-    const minX=Math.max(0,min.x),maxX=Math.min(limit,max.x),minY=Math.max(0,min.y),maxY=Math.min(limit,max.y);
-    const total=(maxX-minX+1)*(maxY-minY+1);
-    if(total<=0||total>120)return;
-    for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++){
-      const key=`${z}/${x}/${y}`;
-      if(this.prefetchDone.has(key))continue;
-      this.prefetchDone.add(key);
-      const img=new Image();
-      img.decoding='async';
-      img.src=this.tileUrl(x,y,z);
-    }
-    if(this.prefetchDone.size>500)this.prefetchDone=new Set([...this.prefetchDone].slice(-240));
+function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>{map?.invalidateSize(true);refreshMap()},140)}))}
+function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión';if(on)refreshMap()}
+window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
+
+function tileUrlFor(config,x,y,z){const invY=(Math.pow(2,z)-1)-y;return config.url.replace('{z}',z).replace('{x}',x).replace('{-y}',invY).replace('{y}',y)}
+function prefetchVisibleTiles(extra=2){
+  if(!map||!activeTileLayer||!navigator.onLine)return;
+  const cfg=MAP_LAYERS[state.activeLayerKey]||MAP_LAYERS.ign;
+  const z=Math.round(map.getZoom());
+  if(z<3||z>18)return;
+  const bounds=map.getPixelBounds();
+  const size=256;
+  const min=bounds.min.divideBy(size).floor().subtract([extra,extra]);
+  const max=bounds.max.divideBy(size).floor().add([extra,extra]);
+  const limit=Math.pow(2,z)-1;
+  const minX=Math.max(0,min.x),maxX=Math.min(limit,max.x),minY=Math.max(0,min.y),maxY=Math.min(limit,max.y);
+  let count=0;
+  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++)count++;
+  if(count<=0||count>180)return;
+  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++){
+    const img=new Image();
+    img.decoding='async';
+    img.src=tileUrlFor(cfg,x,y,z);
   }
 }
+function schedulePrefetch(delay=180,extra=2){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(()=>prefetchVisibleTiles(extra),delay)}
+function refreshMap(){if(!map)return;map.invalidateSize(true);if(activeTileLayer)activeTileLayer.redraw();schedulePrefetch(80,3)}
 function setMapLayer(key){
   if(!MAP_LAYERS[key])key='ign';
+  state.activeLayerKey=key;
   localStorage.setItem('c2-map-layer',key);
-  if(activeLayer){activeLayer.remove();activeLayer=null}
-  activeLayer=new FastIgnTileLayer(MAP_LAYERS[key]).addTo(map);
+  if(activeTileLayer){map.removeLayer(activeTileLayer);activeTileLayer=null}
+  const cfg=MAP_LAYERS[key];
+  activeTileLayer=L.tileLayer(cfg.url,{minZoom:3,maxZoom:20,maxNativeZoom:cfg.maxNativeZoom||18,tileSize:256,detectRetina:false,updateWhenIdle:false,updateWhenZooming:false,keepBuffer:10,noWrap:true,errorTileUrl:TRANSPARENT_TILE,attribution:cfg.attribution,className:'ign-fast-tile'});
+  activeTileLayer.on('tileerror',e=>{const tile=e?.tile;if(!tile||tile.dataset.retryDone==='1')return;tile.dataset.retryDone='1';const src=tile.src;setTimeout(()=>{tile.src=src+(src.includes('?')?'&':'?')+'r='+Date.now()},650)});
+  activeTileLayer.on('load',()=>schedulePrefetch(60,2));
+  activeTileLayer.addTo(map);
   const select=$('#mapLayerSelect');if(select)select.value=key;
-  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},120);
+  schedulePrefetch(160,3);
 }
-function reloadMap(){map.invalidateSize(true);activeLayer?.refreshNow();refreshUserLocationOverlay()}
 function initMap(){
-  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:true,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,maxZoom:20,minZoom:3,maxBounds:[[25,-20],[46,6]],maxBoundsViscosity:.15}).setView([40.4168,-3.7038],6);
-  map.createPane('positionPane');map.getPane('positionPane').style.zIndex=900;map.getPane('positionPane').style.pointerEvents='none';
-  L.control.zoom({position:'bottomright'}).addTo(map);attributionControl=map.attributionControl;
+  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:true,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:3,maxZoom:20,maxBounds:[[25,-20],[46,6]],maxBoundsViscosity:.15}).setView([40.4168,-3.7038],6);
+  map.createPane('positionPane');map.getPane('positionPane').style.zIndex=950;map.getPane('positionPane').style.pointerEvents='none';
+  L.control.zoom({position:'bottomright'}).addTo(map);
   const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
   $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
-  $('#reloadMapBtn')?.addEventListener('click',reloadMap);
-  ['move','moveend','zoom','zoomend','resize','viewreset'].forEach(ev=>map.on(ev,refreshUserLocationOverlay));
-  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},260)));
-  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},300);
-  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},1200);
+  $('#reloadMapBtn')?.addEventListener('click',refreshMap);
+  map.on('move zoom',()=>schedulePrefetch(260,2));
+  map.on('moveend zoomend resize viewreset',()=>{map.invalidateSize(true);schedulePrefetch(80,3)});
+  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,240)));
+  setTimeout(refreshMap,300);setTimeout(()=>schedulePrefetch(0,4),1200);
 }
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
 function drawMarkers(){state.markers.forEach(m=>L.marker([m.lat,m.lng],{icon:iconFor(m.type),zIndexOffset:600}).addTo(map).bindPopup(`<strong>${escapeHtml(m.name)}</strong><br>${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`))}
-function userPositionIcon(heading=0){const h=Number.isFinite(heading)?heading:0;return L.divIcon({className:'user-position-icon',html:`<div class="user-position-wrap user-position-wrap-v2" style="--heading:${h}deg"><div class="user-position-bearing"></div><div class="user-position-center"></div></div>`,iconSize:[56,56],iconAnchor:[28,28]})}
-function ensureUserLocationOverlay(){return null}
-function refreshUserLocationOverlay(){/* solo queda el marcador GPS real de Leaflet */}px`;el.style.top=`${Math.round(pt.y)}px`;el.style.setProperty('--heading',`${Number.isFinite(state.lastHeading)?state.lastHeading:0}deg`);el.hidden=false}
-function updatePosition(pos,center=true){const{latitude:lat,longitude:lng,accuracy,heading}=pos.coords;const h=Number.isFinite(heading)?heading:state.lastHeading;state.lastHeading=Number.isFinite(h)?h:0;$('#coords').textContent=`${lat.toFixed(6)}, ${lng.toFixed(6)}`;$('#accuracy').textContent=`Precisión: ±${Math.round(accuracy)} m`;const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='GPS activo';if(state.accuracyCircle){map.removeLayer(state.accuracyCircle);state.accuracyCircle=null}const latlng=L.latLng(lat,lng);state.lastUserLatLng=latlng;state.lastUserAccuracy=accuracy;refreshUserLocationOverlay();if(state.userMarker){state.userMarker.setLatLng(latlng);state.userMarker.setIcon(userPositionIcon(state.lastHeading))}else state.userMarker=L.marker(latlng,{icon:userPositionIcon(state.lastHeading),pane:'positionPane',zIndexOffset:6000,keyboard:false,interactive:false,riseOnHover:false}).addTo(map);state.userMarker.setZIndexOffset(6000);const afterMove=()=>{if(state.userMarker)state.userMarker.setLatLng(latlng);refreshUserLocationOverlay();setTimeout(refreshUserLocationOverlay,80)};if(center){const targetZoom=Math.max(map.getZoom(),17);if(activeLayer&&typeof activeLayer.preloadAndMove==='function'){const started=activeLayer.preloadAndMove(latlng,targetZoom,afterMove);if(started)return}map.setView(latlng,targetZoom,{animate:false});setTimeout(()=>{activeLayer?.refreshNow();afterMove()},350)}else afterMove()}
+function userPositionIcon(heading=0){const h=Number.isFinite(heading)?heading:0;return L.divIcon({className:'user-position-icon',html:`<div class="user-position-wrap-v3" style="--heading:${h}deg"><div class="user-position-bearing"></div><div class="user-position-center"></div></div>`,iconSize:[56,56],iconAnchor:[28,28]})}
+function updatePosition(pos,center=true){
+  const{latitude:lat,longitude:lng,accuracy,heading}=pos.coords;
+  const h=Number.isFinite(heading)?heading:state.lastHeading;state.lastHeading=Number.isFinite(h)?h:0;
+  $('#coords').textContent=`${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  $('#accuracy').textContent=`Precisión: ±${Math.round(accuracy)} m`;
+  const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='GPS activo';
+  const latlng=L.latLng(lat,lng);
+  if(state.userMarker){state.userMarker.setLatLng(latlng);state.userMarker.setIcon(userPositionIcon(state.lastHeading))}
+  else state.userMarker=L.marker(latlng,{icon:userPositionIcon(state.lastHeading),pane:'positionPane',zIndexOffset:9000,keyboard:false,interactive:false,riseOnHover:false}).addTo(map).bindPopup('Mi posición');
+  state.userMarker.setZIndexOffset(9000);
+  if(center){map.setView(latlng,Math.max(map.getZoom(),17),{animate:false});setTimeout(()=>schedulePrefetch(0,3),120)}
+}
 function geoError(e){const msg=e?.message||'Error desconocido';const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent=`GPS: ${msg}`;alert(`No se pudo obtener la posición: ${msg}. Comprueba permisos y que la web esté en HTTPS.`)}
 function askPosition(center=true){if(!navigator.geolocation){alert('Geolocalización no disponible');return}const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Buscando GPS…';navigator.geolocation.getCurrentPosition(p=>updatePosition(p,center),geoError,{enableHighAccuracy:true,timeout:15000,maximumAge:1000})}
 
 initMap();drawMarkers();
-$('#locateBtn').addEventListener('click',()=>askPosition(true));
-$('#trackBtn').addEventListener('click',()=>{if(state.watchId!==null){navigator.geolocation.clearWatch(state.watchId);state.watchId=null;$('#trackBtn').textContent='Iniciar seguimiento';const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Seguimiento detenido';return}if(!navigator.geolocation)return alert('Geolocalización no disponible');const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Seguimiento GPS activo';state.watchId=navigator.geolocation.watchPosition(p=>updatePosition(p,false),geoError,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});$('#trackBtn').textContent='Detener seguimiento'});
+$('#locateBtn')?.addEventListener('click',()=>askPosition(true));
+$('#trackBtn')?.addEventListener('click',()=>{if(state.watchId!==null){navigator.geolocation.clearWatch(state.watchId);state.watchId=null;$('#trackBtn').textContent='Iniciar seguimiento';const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Seguimiento detenido';return}if(!navigator.geolocation)return alert('Geolocalización no disponible');const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Seguimiento GPS activo';state.watchId=navigator.geolocation.watchPosition(p=>updatePosition(p,false),geoError,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});$('#trackBtn').textContent='Detener seguimiento'});
 $('#addMarkerBtn').addEventListener('click',()=>$('#markerDialog').showModal());$('#markerForm').addEventListener('submit',e=>{if(e.submitter?.value==='cancel')return;state.pendingMarker={name:$('#markerName').value.trim(),type:$('#markerType').value};alert('Pulsa una ubicación del mapa para colocar el punto.')});map.on('click',e=>{if(!state.pendingMarker)return;const m={id:crypto.randomUUID(),...state.pendingMarker,lat:e.latlng.lat,lng:e.latlng.lng,createdAt:new Date().toISOString()};state.markers.push(m);persist('c2-markers',state.markers);L.marker(e.latlng,{icon:iconFor(m.type),zIndexOffset:600}).addTo(map).bindPopup(`<strong>${escapeHtml(m.name)}</strong>`).openPopup();state.pendingMarker=null;$('#markerForm').reset()});
 
 function escapeHtml(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
