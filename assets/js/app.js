@@ -4,48 +4,110 @@ const state={settings:JSON.parse(localStorage.getItem('c2-settings')||'{"callsig
 const persist=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 
 let map;
-let overviewLayer=null;
-let detailLayer=null;
-let renderTimer=null;
-let renderSeq=0;
-let overviewSeq=0;
-const SPAIN_BOUNDS=L.latLngBounds([[25,-20],[46,6]]);
+let activeMapLayer=null;
+let mapRefreshTimer=null;
+const SPAIN_BOUNDS=L.latLngBounds([25,-20],[46,6]);
 const MAP_BG='#d8ddcf';
 const MAP_LAYERS={
-  ign:{label:'IGN topográfico',url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/jpeg',attribution:'© Instituto Geográfico Nacional / CNIG'},
-  pnoa:{label:'Vista aérea PNOA',url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg',attribution:'© Instituto Geográfico Nacional / PNOA'}
+  ign:{label:'IGN topográfico completo',endpoint:'https://api-maps.ign.es/collections/mtn_rasterizado/map',attribution:'© Instituto Geográfico Nacional / CNIG'},
+  pnoa:{label:'Vista aérea PNOA completa',endpoint:'https://api-maps.idee.es/collections/OI.OrthoimageCoverage/map',attribution:'© Instituto Geográfico Nacional / PNOA'}
 };
 
-function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>refreshMap(),140)}))}
+function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>{map?.invalidateSize(true);refreshMap()},140)}))}
 function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión';if(on)refreshMap()}
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
-function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
-function clampBoundsToSpain(b){const south=clamp(b.getSouth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());const north=clamp(b.getNorth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());const west=clamp(b.getWest(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());const east=clamp(b.getEast(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());if(north<=south||east<=west)return map.getBounds();return L.latLngBounds([[south,west],[north,east]])}
-function paddedBounds(pxFactor=1.15){const size=map.getSize();const padX=Math.max(320,Math.min(1200,size.x*pxFactor));const padY=Math.max(320,Math.min(1200,size.y*pxFactor));const nw=map.containerPointToLatLng([-padX,-padY]);const se=map.containerPointToLatLng([size.x+padX,size.y+padY]);return clampBoundsToSpain(L.latLngBounds(nw,se))}
-function projectBounds3857(bounds){const sw=map.options.crs.project(bounds.getSouthWest());const ne=map.options.crs.project(bounds.getNorthEast());return{minx:Math.min(sw.x,ne.x),miny:Math.min(sw.y,ne.y),maxx:Math.max(sw.x,ne.x),maxy:Math.max(sw.y,ne.y)}}
-function overlayPixelSize(bounds,scale=1.25,max=2200,min=512){const nw=map.latLngToContainerPoint(bounds.getNorthWest());const se=map.latLngToContainerPoint(bounds.getSouthEast());let w=Math.max(1,Math.abs(se.x-nw.x))*scale;let h=Math.max(1,Math.abs(se.y-nw.y))*scale;const f=Math.min(1,max/Math.max(w,h));w*=f;h*=f;return{w:Math.round(clamp(w,min,max)),h:Math.round(clamp(h,min,max))}}
-function wmsUrl(cfg,bounds,width,height){const b=projectBounds3857(bounds);const params=new URLSearchParams({SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetMap',LAYERS:cfg.layers,STYLES:'',SRS:'EPSG:3857',BBOX:[b.minx,b.miny,b.maxx,b.maxy].join(','),WIDTH:String(width),HEIGHT:String(height),FORMAT:cfg.format,TRANSPARENT:'FALSE',BGCOLOR:'0xd8ddcf',EXCEPTIONS:'application/vnd.ogc.se_inimage'});return`${cfg.url}?${params.toString()}&_=${Date.now()}`}
-function preloadImage(url){return new Promise((resolve,reject)=>{const img=new Image();img.decoding='async';img.onload=()=>resolve(url);img.onerror=reject;img.src=url})}
-function addOverlay(url,bounds,pane,className,opacity=1){return L.imageOverlay(url,bounds,{pane,interactive:false,opacity,className})}
-async function loadOverview(force=false){if(!map||!state.activeLayerKey||!navigator.onLine)return;const cfg=MAP_LAYERS[state.activeLayerKey];if(!force&&overviewLayer)return;const token=++overviewSeq;const bounds=SPAIN_BOUNDS;const dims={w:1800,h:1500};const url=wmsUrl(cfg,bounds,dims.w,dims.h);try{await preloadImage(url);if(token!==overviewSeq||!map)return;const layer=addOverlay(url,bounds,'overviewPane','single-map-overview',1).addTo(map);const old=overviewLayer;overviewLayer=layer;if(old&&old!==overviewLayer)setTimeout(()=>{try{map.removeLayer(old)}catch{}},80)}catch(e){/* no se borra el plano anterior si falla */}}
-function queueRender(delay=90){clearTimeout(renderTimer);renderTimer=setTimeout(()=>renderDetail(),delay)}
-async function renderDetail(){if(!map||!state.activeLayerKey||!navigator.onLine)return;const size=map.getSize();if(size.x<20||size.y<20){queueRender(250);return}const cfg=MAP_LAYERS[state.activeLayerKey];const bounds=paddedBounds(1.25);const scale=Math.min(Math.max(window.devicePixelRatio||1,1),1.45);const dims=overlayPixelSize(bounds,scale,2400,640);const url=wmsUrl(cfg,bounds,dims.w,dims.h);const token=++renderSeq;try{await preloadImage(url);if(token!==renderSeq||!map)return;const layer=addOverlay(url,bounds,'detailPane','single-map-detail',1).addTo(map);const old=detailLayer;detailLayer=layer;if(old&&old!==detailLayer)setTimeout(()=>{try{map.removeLayer(old)}catch{}},120)}catch(e){if(token===renderSeq)setTimeout(()=>queueRender(700),700)}}
-function refreshMap(){if(!map)return;map.invalidateSize(true);loadOverview(false);queueRender(40)}
-function setMapLayer(key){if(!MAP_LAYERS[key])key='ign';state.activeLayerKey=key;localStorage.setItem('c2-map-layer',key);renderSeq++;overviewSeq++;if(detailLayer){try{map.removeLayer(detailLayer)}catch{} detailLayer=null}if(overviewLayer){try{map.removeLayer(overviewLayer)}catch{} overviewLayer=null}const select=$('#mapLayerSelect');if(select)select.value=key;map.attributionControl?.setPrefix(false);if(map.attributionControl){map.attributionControl.removeAttribution(MAP_LAYERS.ign.attribution);map.attributionControl.removeAttribution(MAP_LAYERS.pnoa.attribution);map.attributionControl.addAttribution(MAP_LAYERS[key].attribution)}loadOverview(true);queueRender(30)}
+function clamp(n,min,max){return Math.max(min,Math.min(max,n))}
+function validBounds(bounds){return bounds&&Number.isFinite(bounds.getWest())&&Number.isFinite(bounds.getSouth())&&Number.isFinite(bounds.getEast())&&Number.isFinite(bounds.getNorth())&&bounds.getEast()>bounds.getWest()&&bounds.getNorth()>bounds.getSouth()}
+function clampToSpain(bounds){
+  const west=clamp(bounds.getWest(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
+  const east=clamp(bounds.getEast(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
+  const south=clamp(bounds.getSouth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
+  const north=clamp(bounds.getNorth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
+  if(east<=west||north<=south)return map.getBounds();
+  return L.latLngBounds([south,west],[north,east]);
+}
+function paddedViewBounds(pad=.32){
+  const b=map.getBounds();
+  const latPad=(b.getNorth()-b.getSouth())*pad;
+  const lngPad=(b.getEast()-b.getWest())*pad;
+  return clampToSpain(L.latLngBounds([b.getSouth()-latPad,b.getWest()-lngPad],[b.getNorth()+latPad,b.getEast()+lngPad]));
+}
+function buildApiMapUrl(cfg,bounds,width,height){
+  const b=clampToSpain(bounds);
+  const bbox=[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].map(v=>Number(v).toFixed(7)).join(',');
+  const params=new URLSearchParams({f:'png',bbox,width:String(width),height:String(height)});
+  return `${cfg.endpoint}?${params.toString()}`;
+}
+function loadImage(src,timeout=14000){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();let done=false;const finish=(ok)=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
+    const timer=setTimeout(()=>finish(false),timeout);img.onload=()=>finish(true);img.onerror=()=>finish(false);img.decoding='async';img.src=src;
+  })
+}
+
+class CompleteMapLayer{
+  constructor(config){this.config=config;this.map=null;this.overview=null;this.current=null;this.next=null;this.seq=0;this.overviewSeq=0;this.timer=null;this.boundSchedule=()=>this.schedule(140);this.boundRefresh=()=>this.refreshNow()}
+  addTo(mapInstance){this.map=mapInstance;this.loadOverview();this.refreshNow();this.map.on('moveend zoomend resize',this.boundSchedule);this.map.on('viewreset',this.boundRefresh);return this}
+  remove(){clearTimeout(this.timer);this.seq++;this.overviewSeq++;if(this.map){this.map.off('moveend zoomend resize',this.boundSchedule);this.map.off('viewreset',this.boundRefresh);[this.overview,this.current,this.next].forEach(layer=>{if(layer){try{this.map.removeLayer(layer)}catch{}}})}this.map=null;this.overview=null;this.current=null;this.next=null}
+  schedule(delay=180){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(),delay)}
+  imageSize(bounds){
+    const size=this.map.getSize();
+    const dpr=Math.min(Math.max(window.devicePixelRatio||1,1),1.7);
+    const viewBounds=this.map.getBounds();
+    const widthRatio=Math.max(1,(bounds.getEast()-bounds.getWest())/Math.max(.000001,viewBounds.getEast()-viewBounds.getWest()));
+    const heightRatio=Math.max(1,(bounds.getNorth()-bounds.getSouth())/Math.max(.000001,viewBounds.getNorth()-viewBounds.getSouth()));
+    return {width:Math.round(clamp(size.x*dpr*widthRatio,640,2200)),height:Math.round(clamp(size.y*dpr*heightRatio,640,2200))};
+  }
+  async loadOverview(){
+    if(!this.map||!navigator.onLine)return;
+    const token=++this.overviewSeq;
+    const size=this.map.getSize();
+    const w=Math.round(clamp(size.x*1.25,700,1300));
+    const h=Math.round(clamp(size.y*1.25,700,1300));
+    const url=buildApiMapUrl(this.config,SPAIN_BOUNDS,w,h);
+    try{await loadImage(url,16000);if(!this.map||token!==this.overviewSeq)return;const layer=L.imageOverlay(url,SPAIN_BOUNDS,{pane:'baseMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'complete-map-image complete-map-overview'});layer.addTo(this.map);if(this.overview&&this.overview!==layer){try{this.map.removeLayer(this.overview)}catch{}}this.overview=layer}catch(err){console.warn('overview map failed',err)}
+  }
+  async refreshNow(){
+    clearTimeout(this.timer);
+    if(!this.map||!navigator.onLine)return;
+    const token=++this.seq;
+    const bounds=paddedViewBounds(.38);
+    if(!validBounds(bounds)){this.schedule(220);return}
+    const {width,height}=this.imageSize(bounds);
+    const url=buildApiMapUrl(this.config,bounds,width,height);
+    try{
+      await loadImage(url,16000);
+      if(!this.map||token!==this.seq)return;
+      const layer=L.imageOverlay(url,bounds,{pane:'detailMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'complete-map-image complete-map-detail'});
+      this.next=layer;layer.addTo(this.map);
+      requestAnimationFrame(()=>{if(!this.map||token!==this.seq)return;layer.setOpacity(1);if(this.current&&this.current!==layer){try{this.map.removeLayer(this.current)}catch{}}this.current=layer;this.next=null;});
+    }catch(err){console.warn('detail map failed',err);this.loadOverview()}
+  }
+}
+
+function refreshMap(){if(!map)return;map.invalidateSize(true);if(activeMapLayer){activeMapLayer.loadOverview();activeMapLayer.refreshNow()}}
+function setMapLayer(key){
+  if(!MAP_LAYERS[key])key='ign';
+  state.activeLayerKey=key;
+  localStorage.setItem('c2-map-layer',key);
+  if(activeMapLayer){activeMapLayer.remove();activeMapLayer=null}
+  activeMapLayer=new CompleteMapLayer(MAP_LAYERS[key]).addTo(map);
+  const select=$('#mapLayerSelect');if(select)select.value=key;
+}
 function initMap(){
-  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:3,maxZoom:20,maxBounds:SPAIN_BOUNDS,maxBoundsViscosity:.18}).setView([40.4168,-3.7038],6);
-  map.createPane('overviewPane');map.getPane('overviewPane').style.zIndex=180;map.getPane('overviewPane').style.pointerEvents='none';
-  map.createPane('detailPane');map.getPane('detailPane').style.zIndex=220;map.getPane('detailPane').style.pointerEvents='none';
+  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:3,maxZoom:20,maxBounds:SPAIN_BOUNDS,maxBoundsViscosity:.2}).setView([40.4168,-3.7038],6);
+  map.createPane('baseMapPane');map.getPane('baseMapPane').style.zIndex=180;map.getPane('baseMapPane').style.pointerEvents='none';
+  map.createPane('detailMapPane');map.getPane('detailMapPane').style.zIndex=190;map.getPane('detailMapPane').style.pointerEvents='none';
   map.createPane('positionPane');map.getPane('positionPane').style.zIndex=950;map.getPane('positionPane').style.pointerEvents='none';
   L.control.zoom({position:'bottomright'}).addTo(map);
   const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
   $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
-  $('#reloadMapBtn')?.addEventListener('click',()=>{loadOverview(true);queueRender(0)});
-  map.on('zoomstart movestart',()=>loadOverview(false));
-  map.on('zoomend moveend resize viewreset',()=>{map.invalidateSize(true);queueRender(35)});
-  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,240)));
-  setTimeout(refreshMap,300);setTimeout(refreshMap,1300);
+  $('#reloadMapBtn')?.addEventListener('click',()=>{clearTimeout(mapRefreshTimer);refreshMap()});
+  map.on('movestart zoomstart',()=>{clearTimeout(mapRefreshTimer)});
+  map.on('moveend zoomend resize',()=>{clearTimeout(mapRefreshTimer);mapRefreshTimer=setTimeout(refreshMap,110)});
+  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,260)));
+  setTimeout(refreshMap,280);
 }
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
@@ -61,7 +123,7 @@ function updatePosition(pos,center=true){
   if(state.userMarker){state.userMarker.setLatLng(latlng);state.userMarker.setIcon(userPositionIcon(state.lastHeading))}
   else state.userMarker=L.marker(latlng,{icon:userPositionIcon(state.lastHeading),pane:'positionPane',zIndexOffset:9000,keyboard:false,interactive:false,riseOnHover:false}).addTo(map).bindPopup('Mi posición');
   state.userMarker.setZIndexOffset(9000);
-  if(center){map.setView(latlng,Math.max(map.getZoom(),17),{animate:false});setTimeout(()=>refreshMap(),120)}
+  if(center){map.setView(latlng,Math.max(map.getZoom(),17),{animate:false});setTimeout(refreshMap,120)}
 }
 function geoError(e){const msg=e?.message||'Error desconocido';const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent=`GPS: ${msg}`;alert(`No se pudo obtener la posición: ${msg}. Comprueba permisos y que la web esté en HTTPS.`)}
 function askPosition(center=true){if(!navigator.geolocation){alert('Geolocalización no disponible');return}const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Buscando GPS…';navigator.geolocation.getCurrentPosition(p=>updatePosition(p,center),geoError,{enableHighAccuracy:true,timeout:15000,maximumAge:1000})}
