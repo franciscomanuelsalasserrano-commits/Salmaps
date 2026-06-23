@@ -8,16 +8,21 @@ let activeMapLayer=null;
 let mapRefreshTimer=null;
 const SPAIN_BOUNDS=L.latLngBounds([25,-20],[46,6]);
 const MAP_BG='#d8ddcf';
-const MAP_VERSION='wms-completo-no-tiles-v3';
+const MAP_VERSION='atak-detail-hidden-v10';
+const EMPTY_TILE='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const MAP_LAYERS={
-  ign:{label:'IGN topográfico',attribution:'© Instituto Geográfico Nacional / CNIG',services:[
-    {type:'wms3857',url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/png'},
-    {type:'api',url:'https://api-maps.ign.es/collections/mtn_rasterizado/map',format:'png'}
-  ]},
-  pnoa:{label:'Vista aérea PNOA',attribution:'© Instituto Geográfico Nacional / PNOA',services:[
-    {type:'wms3857',url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg'},
-    {type:'api',url:'https://api-maps.idee.es/collections/OI.OrthoimageCoverage/map',format:'png'}
-  ]}
+  ign:{
+    label:'IGN topográfico',
+    attribution:'© Instituto Geográfico Nacional / CNIG',
+    base:{url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/png'},
+    detail:'https://www.ign.es/wmts/mapa-raster?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=MTN&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg'
+  },
+  pnoa:{
+    label:'Vista aérea PNOA',
+    attribution:'© Instituto Geográfico Nacional / PNOA',
+    base:{url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg'},
+    detail:'https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=OI.OrthoimageCoverage&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg'
+  }
 };
 
 function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>{map?.invalidateSize(true);refreshMap('nav')},180)}))}
@@ -25,16 +30,16 @@ function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`do
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
 function clamp(n,min,max){return Math.max(min,Math.min(max,n))}
-function validBounds(bounds){return bounds&&Number.isFinite(bounds.getWest())&&Number.isFinite(bounds.getSouth())&&Number.isFinite(bounds.getEast())&&Number.isFinite(bounds.getNorth())&&bounds.getEast()>bounds.getWest()&&bounds.getNorth()>bounds.getSouth()}
+function boundsOK(bounds){return bounds&&Number.isFinite(bounds.getWest())&&Number.isFinite(bounds.getSouth())&&Number.isFinite(bounds.getEast())&&Number.isFinite(bounds.getNorth())&&bounds.getEast()>bounds.getWest()&&bounds.getNorth()>bounds.getSouth()}
 function clampToSpain(bounds){
   const west=clamp(bounds.getWest(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
   const east=clamp(bounds.getEast(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
   const south=clamp(bounds.getSouth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
   const north=clamp(bounds.getNorth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
-  if(east<=west||north<=south)return map?.getBounds?.()||SPAIN_BOUNDS;
+  if(east<=west||north<=south)return SPAIN_BOUNDS;
   return L.latLngBounds([south,west],[north,east]);
 }
-function expandedViewBounds(pad){
+function expandedBounds(pad){
   const b=map.getBounds();
   const latPad=(b.getNorth()-b.getSouth())*pad;
   const lngPad=(b.getEast()-b.getWest())*pad;
@@ -45,149 +50,172 @@ function mercatorBbox(bounds){
   const ne=map.options.crs.project(bounds.getNorthEast());
   return [sw.x,sw.y,ne.x,ne.y].map(v=>Number(v).toFixed(2)).join(',');
 }
-function lonLatBbox(bounds){return [bounds.getWest(),bounds.getSouth(),bounds.getEast(),bounds.getNorth()].map(v=>Number(v).toFixed(7)).join(',')}
-function buildMapUrl(service,bounds,width,height,token){
-  const w=String(Math.round(width));const h=String(Math.round(height));
-  if(service.type==='api'){
-    const params=new URLSearchParams({f:service.format||'png',bbox:lonLatBbox(bounds),width:w,height:h,_:token});
-    return `${service.url}?${params.toString()}`;
-  }
+function makeWmsUrl(base,bounds,width,height,reason){
   const params=new URLSearchParams({
-    SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetMap',LAYERS:service.layers,STYLES:'',SRS:'EPSG:3857',
-    BBOX:mercatorBbox(bounds),WIDTH:w,HEIGHT:h,FORMAT:service.format||'image/png',TRANSPARENT:'FALSE',BGCOLOR:'0xD8DDCF',_:token
+    SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetMap',LAYERS:base.layers,STYLES:'',SRS:'EPSG:3857',
+    BBOX:mercatorBbox(bounds),WIDTH:String(Math.round(width)),HEIGHT:String(Math.round(height)),
+    FORMAT:base.format||'image/png',TRANSPARENT:'FALSE',BGCOLOR:'0xD8DDCF',_:`${MAP_VERSION}-${reason}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   });
-  return `${service.url}?${params.toString()}`;
+  return `${base.url}?${params.toString()}`;
 }
-function preloadImage(src,timeout=26000){
+function preloadImage(src,timeout=18000){
   return new Promise((resolve,reject)=>{
     const img=new Image();let done=false;
-    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
+    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó imagen'))};
     const timer=setTimeout(()=>finish(false),timeout);
-    img.onload=()=>finish(img.naturalWidth>32&&img.naturalHeight>32);
+    img.onload=()=>finish(img.naturalWidth>20&&img.naturalHeight>20);
     img.onerror=()=>finish(false);
     img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer-when-downgrade';img.src=src;
-  })
+  });
 }
-async function firstServiceUrl(config,bounds,width,height,reason,timeout=26000){
-  let lastError;
-  const token=`${MAP_VERSION}-${reason}-z${map.getZoom()}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  for(const service of config.services){
-    const url=buildMapUrl(service,bounds,width,height,token);
-    try{await preloadImage(url,timeout);return url}catch(err){lastError=err;console.warn('Servicio de plano falló; pruebo respaldo',service.type,err)}
-  }
-  throw lastError||new Error('No cargó ningún servicio de plano');
+function tileUrl(template,x,y,z){return template.replace(/\{z\}/g,z).replace(/\{x\}/g,x).replace(/\{y\}/g,y)}
+function preloadTile(src,timeout=11000){
+  return new Promise(resolve=>{
+    const img=new Image();let done=false;
+    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);if(!ok)img.src=EMPTY_TILE;resolve(img)};
+    const timer=setTimeout(()=>finish(false),timeout);
+    img.onload=()=>finish(img.naturalWidth>1&&img.naturalHeight>1);
+    img.onerror=()=>finish(false);
+    img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer-when-downgrade';img.src=src;
+  });
+}
+function tileBounds(x,y,z){
+  const s=256;
+  const nw=map.unproject(L.point(x*s,y*s),z);
+  const se=map.unproject(L.point((x+1)*s,(y+1)*s),z);
+  return L.latLngBounds(se,nw);
+}
+function tilesForBounds(bounds,z,maxTiles=96){
+  const s=256;
+  const nw=map.project(bounds.getNorthWest(),z).divideBy(s).floor();
+  const se=map.project(bounds.getSouthEast(),z).divideBy(s).floor();
+  const max=Math.pow(2,z)-1;
+  const minX=clamp(nw.x,0,max),maxX=clamp(se.x,0,max),minY=clamp(nw.y,0,max),maxY=clamp(se.y,0,max);
+  const tiles=[];
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)tiles.push({x,y,z,bounds:tileBounds(x,y,z)});
+  if(tiles.length<=maxTiles)return tiles;
+  const center=map.project(map.getCenter(),z).divideBy(s);
+  return tiles.sort((a,b)=>(Math.hypot(a.x-center.x,a.y-center.y)-Math.hypot(b.x-center.x,b.y-center.y))).slice(0,maxTiles);
 }
 
-class SingleImageMapLayer{
+class AtakMapLayer{
   constructor(config){
-    this.config=config;this.map=null;this.container=null;this.overview=null;this.current=null;this.next=null;this.seq=0;this.overviewSeq=0;this.timer=null;this.lastZoom=null;
-    this.boundPosition=()=>this.positionAll();
-    this.boundMoveEnd=()=>this.schedule('mover',90);
-    this.boundZoomEnd=()=>this.schedule('zoom',30);
-    this.boundResize=()=>this.schedule('resize',120);
+    this.config=config;this.map=null;this.overview=null;this.base=null;this.activeDetail=null;this.loadingDetail=null;this.overviewSeq=0;this.baseSeq=0;this.detailSeq=0;this.timer=null;this.pendingReason='inicio';
+    this.onPosition=()=>this.positionSnapshots();
+    this.onBaseRefresh=()=>this.schedule('mover',120);
+    this.onZoomRefresh=()=>this.schedule('zoom',40);
+    this.onResize=()=>this.schedule('resize',150);
   }
   addTo(mapInstance){
     this.map=mapInstance;
-    this.container=document.createElement('div');
-    this.container.className='single-wms-layer';
-    this.map.getContainer().insertBefore(this.container,this.map.getContainer().firstChild);
-    this.map.on('move zoom resize viewreset',this.boundPosition);
-    this.map.on('moveend',this.boundMoveEnd);
-    this.map.on('zoomend',this.boundZoomEnd);
-    this.map.on('resize',this.boundResize);
     this.loadOverview('inicio');
-    this.refreshNow('inicio',true);
+    this.refreshBase('inicio');
+    this.refreshDetail('inicio');
+    this.map.on('move zoom resize viewreset',this.onPosition);
+    this.map.on('moveend',this.onBaseRefresh);
+    this.map.on('zoomend',this.onZoomRefresh);
+    this.map.on('resize',this.onResize);
     return this;
   }
   remove(){
-    clearTimeout(this.timer);this.seq++;this.overviewSeq++;
-    if(this.map){
-      this.map.off('move zoom resize viewreset',this.boundPosition);
-      this.map.off('moveend',this.boundMoveEnd);this.map.off('zoomend',this.boundZoomEnd);this.map.off('resize',this.boundResize);
-    }
-    if(this.container)this.container.remove();
-    this.map=null;this.container=null;this.overview=null;this.current=null;this.next=null;
+    clearTimeout(this.timer);this.overviewSeq++;this.baseSeq++;this.detailSeq++;
+    if(this.map){this.map.off('move zoom resize viewreset',this.onPosition);this.map.off('moveend',this.onBaseRefresh);this.map.off('zoomend',this.onZoomRefresh);this.map.off('resize',this.onResize)}
+    [this.overview,this.base,this.activeDetail,this.loadingDetail].forEach(l=>{if(!l)return;if(l.container){try{l.container.remove()}catch(e){}}else if(this.map){try{this.map.removeLayer(l)}catch(e){}}});
+    this.map=null;this.overview=null;this.base=null;this.activeDetail=null;this.loadingDetail=null;
   }
-  schedule(reason='vista',delay=90){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(reason,false),delay)}
-  positionEntry(entry){
-    if(!entry||!entry.img||!this.map)return;
-    const nw=this.map.latLngToContainerPoint(entry.bounds.getNorthWest());
-    const se=this.map.latLngToContainerPoint(entry.bounds.getSouthEast());
-    const left=Math.round(nw.x),top=Math.round(nw.y),width=Math.max(1,Math.round(se.x-nw.x)),height=Math.max(1,Math.round(se.y-nw.y));
-    entry.img.style.transform=`translate3d(${left}px,${top}px,0)`;
-    entry.img.style.width=`${width}px`;entry.img.style.height=`${height}px`;
-  }
-  positionAll(){[this.overview,this.current,this.next].forEach(e=>this.positionEntry(e))}
-  makeEntry(url,bounds,className,opacity=1){
-    const img=document.createElement('img');
-    img.className=className;img.alt='';img.decoding='async';img.draggable=false;img.style.opacity=String(opacity);img.src=url;
-    this.container.appendChild(img);
-    const entry={img,bounds};this.positionEntry(entry);return entry;
-  }
-  removeEntry(entry){if(entry?.img?.parentNode)entry.img.parentNode.removeChild(entry.img)}
-  overviewSize(){
-    const size=this.map.getSize();
-    const ratio=Math.max(1,size.y/Math.max(size.x,1));
-    return {width:clamp(Math.round(size.x*1.9),1100,2200),height:clamp(Math.round(size.x*1.9*ratio),1100,3200)};
-  }
-  detailPad(){
-    const z=this.map.getZoom();
-    return z>=17?.55:z>=15?.7:z>=13?.9:z>=10?1.15:1.35;
-  }
-  detailScale(){
-    const z=this.map.getZoom();const dpr=window.devicePixelRatio||1;
-    const base=z>=17?3.2:z>=15?2.85:z>=13?2.45:z>=11?2.15:1.85;
-    return clamp(Math.max(dpr,base),1.5,3.2);
-  }
-  sizeFor(bounds,scale){
-    const size=this.map.getSize();const view=this.map.getBounds();
+  schedule(reason,delay=100){clearTimeout(this.timer);this.pendingReason=reason;this.timer=setTimeout(()=>this.refresh(reason),delay)}
+  refresh(reason='manual'){if(!this.map||!navigator.onLine)return;this.refreshBase(reason);this.refreshDetail(reason)}
+  viewPad(){const z=this.map.getZoom();return z>=17?1.05:z>=15?1.25:z>=13?1.55:z>=10?1.9:2.4}
+  baseSize(bounds){
+    const size=this.map.getSize();const view=this.map.getBounds();const dpr=window.devicePixelRatio||1;
     const xRatio=Math.max(1,(bounds.getEast()-bounds.getWest())/Math.max(.000001,view.getEast()-view.getWest()));
     const yRatio=Math.max(1,(bounds.getNorth()-bounds.getSouth())/Math.max(.000001,view.getNorth()-view.getSouth()));
-    return {width:clamp(Math.round(size.x*scale*xRatio),900,4096),height:clamp(Math.round(size.y*scale*yRatio),900,4096)};
+    const scale=clamp(dpr*1.15,1.2,2.25);
+    return {width:clamp(Math.round(size.x*xRatio*scale),700,2600),height:clamp(Math.round(size.y*yRatio*scale),700,2600)};
   }
-  async loadOverview(reason='base'){
-    if(!this.map||!this.container||!navigator.onLine)return;
-    const token=++this.overviewSeq;const {width,height}=this.overviewSize();
+  async loadOverview(reason='overview'){
+    if(!this.map||!navigator.onLine)return;
+    const token=++this.overviewSeq;
+    const size=this.map.getSize();const ratio=Math.max(1,size.y/Math.max(size.x,1));
+    const width=clamp(Math.round(size.x*1.45),900,1600);const height=clamp(Math.round(width*ratio),900,2600);
     try{
-      const url=await firstServiceUrl(this.config,SPAIN_BOUNDS,width,height,`${reason}-base`,28000);
+      const url=makeWmsUrl(this.config.base,SPAIN_BOUNDS,width,height,`${reason}-spain`);
+      await preloadImage(url,18000);
       if(!this.map||token!==this.overviewSeq)return;
-      const entry=this.makeEntry(url,SPAIN_BOUNDS,'single-wms-img single-wms-overview',1);
-      const old=this.overview;this.overview=entry;this.positionAll();if(old)this.removeEntry(old);
-    }catch(err){console.warn('No cargó la base general de España',err)}
+      const next=L.imageOverlay(url,SPAIN_BOUNDS,{pane:'basePane',opacity:1,interactive:false,className:'map-base-overview',zIndex:1,attribution:this.config.attribution}).addTo(this.map);
+      const old=this.overview;this.overview=next;if(old)this.map.removeLayer(old);
+    }catch(err){console.warn('No se pudo cargar base general',err)}
   }
-  async refreshNow(reason='vista',force=false){
-    clearTimeout(this.timer);
-    if(!this.map||!this.container||!navigator.onLine)return;
-    const zoom=this.map.getZoom();
-    const currentView=this.map.getBounds();
-    if(!force&&this.current&&this.lastZoom===zoom&&this.current.bounds.pad(-0.18).contains(currentView))return;
-    const token=++this.seq;
-    const bounds=expandedViewBounds(this.detailPad());
-    if(!validBounds(bounds)){this.schedule('bounds',160);return}
-    const {width,height}=this.sizeFor(bounds,this.detailScale());
+  async refreshBase(reason='vista'){
+    if(!this.map||!navigator.onLine)return;
+    const token=++this.baseSeq;
+    const bounds=expandedBounds(this.viewPad());
+    if(!boundsOK(bounds))return;
+    const {width,height}=this.baseSize(bounds);
     try{
-      const url=await firstServiceUrl(this.config,bounds,width,height,`${reason}-detalle`,30000);
-      if(!this.map||token!==this.seq)return;
-      const entry=this.makeEntry(url,bounds,'single-wms-img single-wms-detail',0);
-      this.next=entry;this.positionAll();
-      requestAnimationFrame(()=>{if(!this.map||token!==this.seq)return;entry.img.style.opacity='1';setTimeout(()=>{if(!this.map||token!==this.seq)return;const old=this.current;this.current=entry;this.next=null;this.lastZoom=this.map.getZoom();if(old)this.removeEntry(old);this.positionAll()},180)});
-    }catch(err){
-      console.warn('No cargó el detalle; se mantiene el plano anterior',err);
-      if(!this.overview)this.loadOverview('respaldo');
-    }
+      const url=makeWmsUrl(this.config.base,bounds,width,height,`${reason}-base-z${this.map.getZoom()}`);
+      await preloadImage(url,16000);
+      if(!this.map||token!==this.baseSeq)return;
+      const next=L.imageOverlay(url,bounds,{pane:'basePane',opacity:1,interactive:false,className:'map-base-view',zIndex:2,attribution:this.config.attribution}).addTo(this.map);
+      const old=this.base;this.base=next;if(old)setTimeout(()=>{if(this.map&&old!==this.base)this.map.removeLayer(old)},120);
+    }catch(err){console.warn('No se pudo cargar base de vista; mantengo la anterior',err);if(!this.overview)this.loadOverview('respaldo')}
   }
-}
+  detailPad(){const z=this.map.getZoom();return z>=17?.35:z>=15?.55:z>=13?.75:z>=10?1.05:1.35}
+  positionSnapshot(snapshot){
+    if(!snapshot||!this.map)return;
+    snapshot.entries.forEach(entry=>{
+      const nw=this.map.latLngToContainerPoint(entry.bounds.getNorthWest());
+      const se=this.map.latLngToContainerPoint(entry.bounds.getSouthEast());
+      const left=Math.round(nw.x),top=Math.round(nw.y),width=Math.max(1,Math.round(se.x-nw.x)),height=Math.max(1,Math.round(se.y-nw.y));
+      entry.img.style.transform=`translate3d(${left}px,${top}px,0)`;
+      entry.img.style.width=`${width}px`;entry.img.style.height=`${height}px`;
+    });
+  }
+  positionSnapshots(){this.positionSnapshot(this.activeDetail);this.positionSnapshot(this.loadingDetail)}
+  async refreshDetail(reason='detalle'){
+    if(!this.map||!navigator.onLine)return;
+    const token=++this.detailSeq;
+    if(this.loadingDetail?.container){try{this.loadingDetail.container.remove()}catch(e){}this.loadingDetail=null}
+    const z=clamp(Math.round(this.map.getZoom()),5,18);
+    const bounds=expandedBounds(this.detailPad());
+    const tiles=tilesForBounds(bounds,z,100);
+    if(!tiles.length)return;
+    const container=document.createElement('div');
+    container.className='static-detail-snapshot';
+    container.style.opacity='0';
+    this.map.getPane('detailPane').appendChild(container);
+    const snapshot={container,entries:[],z,token};
+    this.loadingDetail=snapshot;
+    try{
+      const loaded=await Promise.all(tiles.map(async t=>({tile:t,img:await preloadTile(tileUrl(this.config.detail,t.x,t.y,t.z),11500)})));
+      if(!this.map||token!==this.detailSeq){container.remove();return}
+      loaded.forEach(({tile,img})=>{
+        img.className='static-detail-img';img.alt='';img.draggable=false;img.decoding='async';img.loading='eager';
+        container.appendChild(img);snapshot.entries.push({img,bounds:tile.bounds});
+      });
+      this.positionSnapshot(snapshot);
+      requestAnimationFrame(()=>{
+        if(!this.map||token!==this.detailSeq){container.remove();return}
+        container.style.opacity='1';
+        const old=this.activeDetail;this.activeDetail=snapshot;this.loadingDetail=null;
+        setTimeout(()=>{if(this.map&&old?.container&&old!==this.activeDetail)old.container.remove()},220);
+      });
+    }catch(err){console.warn('No se pudo preparar detalle completo; mantengo base',err);container.remove();if(this.loadingDetail===snapshot)this.loadingDetail=null}
+  }
+}}
 
-function refreshMap(reason='manual'){if(!map)return;map.invalidateSize(true);if(activeMapLayer){if(!activeMapLayer.overview||['boton','arranque','online','nav','resize','orientationchange'].includes(reason))activeMapLayer.loadOverview(reason);activeMapLayer.refreshNow(reason,true)}}
+function refreshMap(reason='manual'){if(!map)return;map.invalidateSize(true);if(activeMapLayer){if(['boton','arranque','online','nav','resize','orientationchange'].includes(reason))activeMapLayer.loadOverview(reason);activeMapLayer.refresh(reason)}}
 function setMapLayer(key){
   if(!MAP_LAYERS[key])key='ign';
   state.activeLayerKey=key;localStorage.setItem('c2-map-layer',key);
   if(activeMapLayer){activeMapLayer.remove();activeMapLayer=null}
-  activeMapLayer=new SingleImageMapLayer(MAP_LAYERS[key]).addTo(map);
+  activeMapLayer=new AtakMapLayer(MAP_LAYERS[key]).addTo(map);
   const select=$('#mapLayerSelect');if(select)select.value=key;
 }
 function initMap(){
   map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:5,maxZoom:19,maxBounds:SPAIN_BOUNDS,maxBoundsViscosity:.65}).setView([40.4168,-3.7038],6);
+  map.createPane('basePane');map.getPane('basePane').style.zIndex=150;map.getPane('basePane').style.pointerEvents='none';
+  map.createPane('detailPane');map.getPane('detailPane').style.zIndex=260;map.getPane('detailPane').style.pointerEvents='none';
   map.createPane('positionPane');map.getPane('positionPane').style.zIndex=950;map.getPane('positionPane').style.pointerEvents='none';
   L.control.zoom({position:'bottomright'}).addTo(map);
   const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
