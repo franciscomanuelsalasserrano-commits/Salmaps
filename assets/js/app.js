@@ -3,64 +3,101 @@ const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s
 const state={settings:JSON.parse(localStorage.getItem('c2-settings')||'{"callsign":"Jefe de sección","unit":"Puesto de mando"}'),messages:JSON.parse(localStorage.getItem('c2-messages')||'[]'),markers:JSON.parse(localStorage.getItem('c2-markers')||'[]'),pendingMarker:null,watchId:null,userMarker:null,lastHeading:0,activeLayerKey:null};
 const persist=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 
-let map;let activeTileLayer=null;let prefetchTimer=null;
+let map;let activeBaseLayer=null;let activeDetailLayer=null;let prefetchTimer=null;
 const TRANSPARENT_TILE='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+const MAP_BACKGROUND='#d8ddcf';
 const MAP_LAYERS={
-  ign:{label:'IGN topográfico',url:'https://tms-mapa-raster.ign.es/1.0.0/mapa-raster/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / CNIG',maxNativeZoom:18},
-  pnoa:{label:'Vista aérea PNOA',url:'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / PNOA',maxNativeZoom:18}
+  ign:{
+    label:'IGN topográfico',
+    url:'https://www.ign.es/wmts/mapa-raster?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=MTN&STYLE=default&FORMAT=image/jpeg&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+    attribution:'© Instituto Geográfico Nacional / CNIG',
+    maxNativeZoom:18,
+    overviewZoom:8
+  },
+  pnoa:{
+    label:'Vista aérea PNOA',
+    url:'https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=OI.OrthoimageCoverage&STYLE=default&FORMAT=image/jpeg&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+    attribution:'© Instituto Geográfico Nacional / PNOA',
+    maxNativeZoom:19,
+    overviewZoom:9
+  }
 };
 
 function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>{map?.invalidateSize(true);refreshMap()},140)}))}
 function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión';if(on)refreshMap()}
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
-function tileUrlFor(config,x,y,z){const invY=(Math.pow(2,z)-1)-y;return config.url.replace('{z}',z).replace('{x}',x).replace('{-y}',invY).replace('{y}',y)}
-function prefetchVisibleTiles(extra=2){
-  if(!map||!activeTileLayer||!navigator.onLine)return;
-  const cfg=MAP_LAYERS[state.activeLayerKey]||MAP_LAYERS.ign;
-  const z=Math.round(map.getZoom());
-  if(z<3||z>18)return;
+function layerUrl(cfg,x,y,z){return cfg.url.replaceAll('{z}',String(z)).replaceAll('{x}',String(x)).replaceAll('{y}',String(y)).replaceAll('{-y}',String((2**z-1)-y))}
+function retryTile(e){const tile=e?.tile;if(!tile||tile.dataset.retryDone==='1')return;tile.dataset.retryDone='1';const src=tile.src;setTimeout(()=>{tile.src=src+(src.includes('?')?'&':'?')+'retry='+Date.now()},450)}
+function makeLeafletTileLayer(cfg,mode){
+  const isBase=mode==='base';
+  const layer=L.tileLayer(cfg.url,{
+    minZoom:3,
+    maxZoom:20,
+    maxNativeZoom:isBase?cfg.overviewZoom:cfg.maxNativeZoom,
+    tileSize:256,
+    zoomOffset:0,
+    detectRetina:false,
+    updateWhenIdle:isBase?false:true,
+    updateWhenZooming:false,
+    keepBuffer:isBase?16:8,
+    noWrap:true,
+    bounds:[[25,-20],[46,6]],
+    errorTileUrl:TRANSPARENT_TILE,
+    attribution:isBase?cfg.attribution:'',
+    className:isBase?'atak-base-tile':'atak-detail-tile'
+  });
+  layer.on('tileerror',retryTile);
+  layer.on('load',()=>schedulePrefetch(isBase?80:30,3));
+  return layer;
+}
+function prefetchTilesAtZoom(cfg,z,extra=2,limitMax=260){
+  if(!map||!navigator.onLine||!cfg)return;
+  z=Math.max(3,Math.min(cfg.maxNativeZoom,Math.round(z)));
   const bounds=map.getPixelBounds();
   const size=256;
   const min=bounds.min.divideBy(size).floor().subtract([extra,extra]);
   const max=bounds.max.divideBy(size).floor().add([extra,extra]);
-  const limit=Math.pow(2,z)-1;
+  const limit=(2**z)-1;
   const minX=Math.max(0,min.x),maxX=Math.min(limit,max.x),minY=Math.max(0,min.y),maxY=Math.min(limit,max.y);
-  let count=0;
-  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++)count++;
-  if(count<=0||count>180)return;
-  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++){
-    const img=new Image();
-    img.decoding='async';
-    img.src=tileUrlFor(cfg,x,y,z);
-  }
+  const total=(maxX-minX+1)*(maxY-minY+1);if(total<=0||total>limitMax)return;
+  for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++){const img=new Image();img.decoding='async';img.loading='eager';img.src=layerUrl(cfg,x,y,z)}
 }
-function schedulePrefetch(delay=180,extra=2){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(()=>prefetchVisibleTiles(extra),delay)}
-function refreshMap(){if(!map)return;map.invalidateSize(true);if(activeTileLayer)activeTileLayer.redraw();schedulePrefetch(80,3)}
+function warmUpView(extra=3){
+  const cfg=MAP_LAYERS[state.activeLayerKey]||MAP_LAYERS.ign;if(!map||!cfg)return;
+  const z=Math.round(map.getZoom());
+  prefetchTilesAtZoom(cfg,Math.min(z,cfg.overviewZoom),extra+1,180);
+  if(z>cfg.overviewZoom)prefetchTilesAtZoom(cfg,z,extra,320);
+  if(z>cfg.overviewZoom+1)prefetchTilesAtZoom(cfg,z-1,extra,220);
+}
+function schedulePrefetch(delay=160,extra=3){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(()=>warmUpView(extra),delay)}
+function refreshMap(){if(!map)return;map.invalidateSize(true);activeBaseLayer?.redraw();activeDetailLayer?.redraw();schedulePrefetch(40,4)}
 function setMapLayer(key){
   if(!MAP_LAYERS[key])key='ign';
   state.activeLayerKey=key;
   localStorage.setItem('c2-map-layer',key);
-  if(activeTileLayer){map.removeLayer(activeTileLayer);activeTileLayer=null}
+  if(activeDetailLayer){map.removeLayer(activeDetailLayer);activeDetailLayer=null}
+  if(activeBaseLayer){map.removeLayer(activeBaseLayer);activeBaseLayer=null}
   const cfg=MAP_LAYERS[key];
-  activeTileLayer=L.tileLayer(cfg.url,{minZoom:3,maxZoom:20,maxNativeZoom:cfg.maxNativeZoom||18,tileSize:256,detectRetina:false,updateWhenIdle:false,updateWhenZooming:false,keepBuffer:10,noWrap:true,errorTileUrl:TRANSPARENT_TILE,attribution:cfg.attribution,className:'ign-fast-tile'});
-  activeTileLayer.on('tileerror',e=>{const tile=e?.tile;if(!tile||tile.dataset.retryDone==='1')return;tile.dataset.retryDone='1';const src=tile.src;setTimeout(()=>{tile.src=src+(src.includes('?')?'&':'?')+'r='+Date.now()},650)});
-  activeTileLayer.on('load',()=>schedulePrefetch(60,2));
-  activeTileLayer.addTo(map);
+  activeBaseLayer=makeLeafletTileLayer(cfg,'base').addTo(map);
+  activeDetailLayer=makeLeafletTileLayer(cfg,'detail').addTo(map);
   const select=$('#mapLayerSelect');if(select)select.value=key;
-  schedulePrefetch(160,3);
+  document.body.dataset.mapLayer=key;
+  schedulePrefetch(0,5);
+  setTimeout(()=>schedulePrefetch(350,5),350);
 }
 function initMap(){
-  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:true,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:3,maxZoom:20,maxBounds:[[25,-20],[46,6]],maxBoundsViscosity:.15}).setView([40.4168,-3.7038],6);
+  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:true,inertia:true,inertiaDeceleration:3000,worldCopyJump:false,minZoom:3,maxZoom:20,maxBounds:[[25,-20],[46,6]],maxBoundsViscosity:.25}).setView([40.4168,-3.7038],6);
   map.createPane('positionPane');map.getPane('positionPane').style.zIndex=950;map.getPane('positionPane').style.pointerEvents='none';
   L.control.zoom({position:'bottomright'}).addTo(map);
   const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
   $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
   $('#reloadMapBtn')?.addEventListener('click',refreshMap);
-  map.on('move zoom',()=>schedulePrefetch(260,2));
-  map.on('moveend zoomend resize viewreset',()=>{map.invalidateSize(true);schedulePrefetch(80,3)});
-  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,240)));
-  setTimeout(refreshMap,300);setTimeout(()=>schedulePrefetch(0,4),1200);
+  map.on('movestart zoomstart',()=>schedulePrefetch(0,4));
+  map.on('move zoom',()=>schedulePrefetch(120,3));
+  map.on('moveend zoomend resize viewreset',()=>{map.invalidateSize(true);schedulePrefetch(20,5)});
+  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,220)));
+  setTimeout(refreshMap,250);setTimeout(()=>schedulePrefetch(0,6),900);
 }
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
