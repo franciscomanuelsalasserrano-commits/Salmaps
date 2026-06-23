@@ -33,60 +33,133 @@ function paddedViewBounds(pad=.32){
   const lngPad=(b.getEast()-b.getWest())*pad;
   return clampToSpain(L.latLngBounds([b.getSouth()-latPad,b.getWest()-lngPad],[b.getNorth()+latPad,b.getEast()+lngPad]));
 }
-function buildApiMapUrl(cfg,bounds,width,height){
+function buildApiMapUrl(cfg,bounds,width,height,stamp=''){
   const b=clampToSpain(bounds);
   const bbox=[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()].map(v=>Number(v).toFixed(7)).join(',');
-  const params=new URLSearchParams({f:'png',bbox,width:String(width),height:String(height)});
+  const params=new URLSearchParams({
+    f:'png',
+    bbox,
+    width:String(Math.round(width)),
+    height:String(Math.round(height))
+  });
+  // Forzamos petición nueva en cada zoom/movimiento. Si el navegador reutiliza una imagen antigua,
+  // parece que las capas no suben o no bajan de escala.
+  if(stamp)params.set('_',stamp);
   return `${cfg.endpoint}?${params.toString()}`;
 }
-function loadImage(src,timeout=14000){
+function loadImage(src,timeout=45000){
   return new Promise((resolve,reject)=>{
-    const img=new Image();let done=false;const finish=(ok)=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
-    const timer=setTimeout(()=>finish(false),timeout);img.onload=()=>finish(true);img.onerror=()=>finish(false);img.decoding='async';img.src=src;
+    const img=new Image();let done=false;
+    const finish=(ok)=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
+    const timer=setTimeout(()=>finish(false),timeout);
+    img.onload=()=>finish(true);
+    img.onerror=()=>finish(false);
+    img.decoding='async';
+    img.loading='eager';
+    img.src=src;
   })
 }
 
 class CompleteMapLayer{
-  constructor(config){this.config=config;this.map=null;this.overview=null;this.current=null;this.next=null;this.seq=0;this.overviewSeq=0;this.timer=null;this.boundSchedule=()=>this.schedule(140);this.boundRefresh=()=>this.refreshNow()}
-  addTo(mapInstance){this.map=mapInstance;this.loadOverview();this.refreshNow();this.map.on('moveend zoomend resize',this.boundSchedule);this.map.on('viewreset',this.boundRefresh);return this}
-  remove(){clearTimeout(this.timer);this.seq++;this.overviewSeq++;if(this.map){this.map.off('moveend zoomend resize',this.boundSchedule);this.map.off('viewreset',this.boundRefresh);[this.overview,this.current,this.next].forEach(layer=>{if(layer){try{this.map.removeLayer(layer)}catch{}}})}this.map=null;this.overview=null;this.current=null;this.next=null}
-  schedule(delay=180){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(),delay)}
-  imageSize(bounds){
+  constructor(config){
+    this.config=config;this.map=null;this.overview=null;this.current=null;this.next=null;
+    this.seq=0;this.overviewSeq=0;this.timer=null;this.pending=false;
+    this.boundSchedule=()=>this.schedule(80);
+    this.boundRefresh=()=>this.refreshNow('reset');
+    this.boundZoomStart=()=>{clearTimeout(this.timer);this.pending=true};
+  }
+  addTo(mapInstance){
+    this.map=mapInstance;
+    this.loadOverview();
+    this.refreshNow('inicio');
+    // moveend y zoomend son los únicos momentos en los que se pide la imagen completa nueva.
+    // Durante el gesto se mantiene el plano anterior para no ver fondo negro.
+    this.map.on('movestart zoomstart',this.boundZoomStart);
+    this.map.on('moveend zoomend resize',this.boundSchedule);
+    this.map.on('viewreset',this.boundRefresh);
+    return this;
+  }
+  remove(){
+    clearTimeout(this.timer);this.seq++;this.overviewSeq++;
+    if(this.map){
+      this.map.off('movestart zoomstart',this.boundZoomStart);
+      this.map.off('moveend zoomend resize',this.boundSchedule);
+      this.map.off('viewreset',this.boundRefresh);
+      [this.overview,this.current,this.next].forEach(layer=>{if(layer){try{this.map.removeLayer(layer)}catch{}}});
+    }
+    this.map=null;this.overview=null;this.current=null;this.next=null;
+  }
+  schedule(delay=100){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow('vista'),delay)}
+  dpr(){
+    const z=this.map?.getZoom?.()||6;
+    const device=window.devicePixelRatio||1;
+    // A más zoom, más píxeles pedimos al servicio para que suba el detalle topográfico/aéreo.
+    const target=z>=17?3.2:z>=15?2.9:z>=13?2.55:z>=10?2.25:1.9;
+    return Math.min(Math.max(device,target),3.2);
+  }
+  imageSize(bounds,quality=1){
     const size=this.map.getSize();
-    const dpr=Math.min(Math.max(window.devicePixelRatio||1,1),1.7);
+    const dpr=this.dpr()*quality;
     const viewBounds=this.map.getBounds();
     const widthRatio=Math.max(1,(bounds.getEast()-bounds.getWest())/Math.max(.000001,viewBounds.getEast()-viewBounds.getWest()));
     const heightRatio=Math.max(1,(bounds.getNorth()-bounds.getSouth())/Math.max(.000001,viewBounds.getNorth()-viewBounds.getSouth()));
-    return {width:Math.round(clamp(size.x*dpr*widthRatio,640,2200)),height:Math.round(clamp(size.y*dpr*heightRatio,640,2200))};
+    return {
+      width:Math.round(clamp(size.x*dpr*widthRatio,720,4096)),
+      height:Math.round(clamp(size.y*dpr*heightRatio,720,4096))
+    };
   }
   async loadOverview(){
     if(!this.map||!navigator.onLine)return;
     const token=++this.overviewSeq;
     const size=this.map.getSize();
-    const w=Math.round(clamp(size.x*1.25,700,1300));
-    const h=Math.round(clamp(size.y*1.25,700,1300));
-    const url=buildApiMapUrl(this.config,SPAIN_BOUNDS,w,h);
-    try{await loadImage(url,16000);if(!this.map||token!==this.overviewSeq)return;const layer=L.imageOverlay(url,SPAIN_BOUNDS,{pane:'baseMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'complete-map-image complete-map-overview'});layer.addTo(this.map);if(this.overview&&this.overview!==layer){try{this.map.removeLayer(this.overview)}catch{}}this.overview=layer}catch(err){console.warn('overview map failed',err)}
+    const w=Math.round(clamp(size.x*1.6,900,1800));
+    const h=Math.round(clamp(size.y*1.6,900,1800));
+    const url=buildApiMapUrl(this.config,SPAIN_BOUNDS,w,h,`overview-${Date.now()}-${token}`);
+    try{
+      await loadImage(url,45000);
+      if(!this.map||token!==this.overviewSeq)return;
+      const layer=L.imageOverlay(url,SPAIN_BOUNDS,{pane:'baseMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'complete-map-image complete-map-overview'});
+      layer.addTo(this.map);
+      if(this.overview&&this.overview!==layer){try{this.map.removeLayer(this.overview)}catch{}}
+      this.overview=layer;
+    }catch(err){console.warn('overview map failed',err)}
   }
-  async refreshNow(){
+  async refreshNow(reason='vista'){
     clearTimeout(this.timer);
     if(!this.map||!navigator.onLine)return;
     const token=++this.seq;
-    const bounds=paddedViewBounds(.38);
+    this.pending=true;
+    const zoom=this.map.getZoom();
+    const bounds=paddedViewBounds(zoom>=14?.20:zoom>=10?.26:.34);
     if(!validBounds(bounds)){this.schedule(220);return}
-    const {width,height}=this.imageSize(bounds);
-    const url=buildApiMapUrl(this.config,bounds,width,height);
+    const tryLoad=async(quality)=>{
+      const {width,height}=this.imageSize(bounds,quality);
+      const url=buildApiMapUrl(this.config,bounds,width,height,`${reason}-z${zoom}-${Date.now()}-${token}-${quality}`);
+      await loadImage(url,45000);
+      return url;
+    };
     try{
-      await loadImage(url,16000);
+      let url;
+      try{url=await tryLoad(1)}catch(firstErr){console.warn('detail map high failed, retry normal',firstErr);url=await tryLoad(.72)}
       if(!this.map||token!==this.seq)return;
       const layer=L.imageOverlay(url,bounds,{pane:'detailMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'complete-map-image complete-map-detail'});
-      this.next=layer;layer.addTo(this.map);
-      requestAnimationFrame(()=>{if(!this.map||token!==this.seq)return;layer.setOpacity(1);if(this.current&&this.current!==layer){try{this.map.removeLayer(this.current)}catch{}}this.current=layer;this.next=null;});
-    }catch(err){console.warn('detail map failed',err);this.loadOverview()}
+      this.next=layer;
+      layer.addTo(this.map);
+      requestAnimationFrame(()=>{
+        if(!this.map||token!==this.seq)return;
+        if(this.current&&this.current!==layer){try{this.map.removeLayer(this.current)}catch{}}
+        this.current=layer;this.next=null;this.pending=false;
+      });
+    }catch(err){
+      // No quitamos la capa anterior nunca. Si una petición falla, se conserva el plano que ya estaba visible.
+      console.warn('detail map failed; keeping previous map',err);
+      this.pending=false;
+      if(!this.overview)this.loadOverview();
+    }
   }
 }
 
-function refreshMap(){if(!map)return;map.invalidateSize(true);if(activeMapLayer){activeMapLayer.loadOverview();activeMapLayer.refreshNow()}}
+function refreshMap(){if(!map)return;map.invalidateSize(true);if(activeMapLayer){activeMapLayer.refreshNow('manual')}}
 function setMapLayer(key){
   if(!MAP_LAYERS[key])key='ign';
   state.activeLayerKey=key;
@@ -105,9 +178,9 @@ function initMap(){
   $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
   $('#reloadMapBtn')?.addEventListener('click',()=>{clearTimeout(mapRefreshTimer);refreshMap()});
   map.on('movestart zoomstart',()=>{clearTimeout(mapRefreshTimer)});
-  map.on('moveend zoomend resize',()=>{clearTimeout(mapRefreshTimer);mapRefreshTimer=setTimeout(refreshMap,110)});
+  map.on('moveend zoomend resize',()=>{clearTimeout(mapRefreshTimer);mapRefreshTimer=setTimeout(refreshMap,80)});
   ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(refreshMap,260)));
-  setTimeout(refreshMap,280);
+  setTimeout(refreshMap,180);
 }
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
