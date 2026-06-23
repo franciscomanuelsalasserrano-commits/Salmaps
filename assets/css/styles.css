@@ -12,3 +12,18 @@
 /* Planos topográficos v1: sin aviso que tape pantalla */
 .map-loading{display:none!important}
 .continuous-map-image{image-rendering:auto;will-change:opacity,transform}
+
+
+/* FIX planos completos v2: usar teselas IGN/TMS estables y quitar marcador duplicado */
+#view-map{overflow:hidden!important;touch-action:none;position:fixed!important}
+#map{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-height:0!important;background:#182018!important;z-index:1!important}
+.leaflet-container{background:#182018!important}
+.ign-fast-tile{image-rendering:auto;background:#182018;will-change:transform,opacity}
+.user-location-overlay{display:none!important}
+.map-loading{display:none!important}
+.leaflet-position-pane{z-index:950!important;pointer-events:none!important}
+.user-position-icon{background:transparent!important;border:0!important;pointer-events:none!important}
+.user-position-wrap-v2{position:relative;width:56px;height:56px;filter:drop-shadow(0 2px 7px rgba(0,0,0,.95));transform:rotate(var(--heading));transform-origin:50% 50%}
+.user-position-bearing{position:absolute;left:50%;top:5px;transform:translateX(-50%);width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-bottom:31px solid #1e88ff}
+.user-position-bearing::after{content:'';position:absolute;left:-7px;top:11px;width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:17px solid #d8ebff}
+.user-position-center{position:absolute;left:50%;top:50%;width:16px;height:16px;transform:translate(-50%,-50%);border-radius:50%;background:#005dff;border:3px solid #fff;box-shadow:0 0 0 3px rgba(30,136,255,.32),0 0 16px rgba(30,136,255,.8)}
