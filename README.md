@@ -2,8 +2,7 @@
 
 Prototipo web/PWA, pensado para GitHub Pages, de una aplicación de mando y control de nivel sección centrada en:
 
-- mapa desplegable con carga uniforme al ampliar;
-- capas seleccionables: Plano rápido, IGN España, Vista aérea PNOA y Satélite Esri;
+- mapa desplegable OpenStreetMap;
 - posición GPS y seguimiento local;
 - puntos tácticos sobre el mapa;
 - chat almacenado localmente;
@@ -24,7 +23,7 @@ La geolocalización y el service worker requieren HTTPS. GitHub Pages sirve el s
 
 ## Uso
 
-- **Mapa:** permite seleccionar capa, centrar la posición, activar seguimiento y colocar puntos. Al ampliar, mantiene el plano anterior hasta que el nuevo nivel está cargado para evitar que aparezcan cuadrados sueltos.
+- **Mapa:** permite centrar la posición, activar seguimiento y colocar puntos.
 - **Chat:** conserva los mensajes únicamente en el navegador actual.
 - **Documentos:** guarda archivos con IndexedDB en el navegador actual.
 - **Ajustes:** cambia indicativo/unidad y exporta o importa datos JSON.
@@ -37,7 +36,7 @@ Este proyecto es un **prototipo frontend sin backend**:
 - no incluye autenticación;
 - no incorpora cifrado de extremo a extremo;
 - los archivos y mensajes permanecen en el navegador local;
-- las teselas/capas externas del mapa requieren conexión; el service worker no las cachea para evitar mosaicos corruptos o antiguos;
+- las teselas del mapa base requieren conexión, salvo las que el navegador haya almacenado previamente;
 - no está auditado ni homologado para uso militar, emergencias o información sensible.
 
 No debe emplearse con información clasificada, datos operativos reales o información cuya filtración pueda causar daños.
@@ -63,3 +62,13 @@ python3 -m http.server 8080
 ```
 
 Después abre `http://localhost:8080`.
+
+## Cambio de planos: carga uniforme
+
+Esta versión cambia solo la parte de planos/mapa:
+
+- Añade selector de capa: Plano estable, IGN España, Vista aérea PNOA y Satélite Esri.
+- Al ampliar o cambiar capa, cubre el mapa con una pantalla de carga y revela la vista de golpe cuando las teselas visibles han terminado.
+- Evita que el usuario vea teselas sueltas cargando por cuadrados.
+- Añade botón `Recargar plano` para forzar una nueva descarga de la vista actual.
+- El Service Worker no cachea teselas externas del mapa y usa estrategia network-first para evitar código antiguo.
