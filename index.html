@@ -25,24 +25,23 @@
     <section id="view-map" class="view active" aria-label="Mapa">
       <div id="map"></div>
       <div class="map-toolbar">
-        <button id="locateBtn" class="action primary">◎ Mi posición</button>
-        <button id="trackBtn" class="action">Iniciar seguimiento</button>
-        <button id="addMarkerBtn" class="action">Añadir punto</button>
         <label class="map-layer-picker">Capa
-          <select id="mapLayerSelect" aria-label="Seleccionar capa de mapa">
-            <option value="carto">Plano rápido</option>
-            <option value="osm">OpenStreetMap</option>
+          <select id="baseLayerSelect" aria-label="Seleccionar capa del plano">
+            <option value="osm">Plano rápido</option>
             <option value="ign">IGN España</option>
             <option value="pnoa">Vista aérea PNOA</option>
             <option value="esri">Satélite Esri</option>
           </select>
         </label>
+        <button id="locateBtn" class="action primary">◎ Mi posición</button>
+        <button id="trackBtn" class="action">Iniciar seguimiento</button>
+        <button id="addMarkerBtn" class="action">Añadir punto</button>
       </div>
+      <div id="mapLoading" class="map-loading" aria-live="polite">Cargando plano completo…</div>
       <aside id="positionCard" class="position-card">
         <strong>Posición</strong>
         <span id="coords">Sin datos GPS</span>
         <span id="accuracy">Precisión: —</span>
-        <span id="gpsStatus" class="gps-status">Pulsa “Mi posición”</span>
       </aside>
     </section>
 
