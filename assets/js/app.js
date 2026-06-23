@@ -6,15 +6,16 @@ const persist=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 let map;
 let activeMapLayer=null;
 let mapRefreshTimer=null;
-const MAP_BG='#d8ddcf';
 const SPAIN_BOUNDS=L.latLngBounds([25,-20],[46,6]);
+const MAP_BG='#d8ddcf';
+const MAP_VERSION='wms-completo-no-tiles-v3';
 const MAP_LAYERS={
   ign:{label:'IGN topográfico',attribution:'© Instituto Geográfico Nacional / CNIG',services:[
-    {type:'wms',url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/png'},
+    {type:'wms3857',url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/png'},
     {type:'api',url:'https://api-maps.ign.es/collections/mtn_rasterizado/map',format:'png'}
   ]},
   pnoa:{label:'Vista aérea PNOA',attribution:'© Instituto Geográfico Nacional / PNOA',services:[
-    {type:'wms',url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg'},
+    {type:'wms3857',url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg'},
     {type:'api',url:'https://api-maps.idee.es/collections/OI.OrthoimageCoverage/map',format:'png'}
   ]}
 };
@@ -24,154 +25,177 @@ function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`do
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
 function clamp(n,min,max){return Math.max(min,Math.min(max,n))}
-function safeNum(v){return Number.isFinite(v)?v:0}
 function validBounds(bounds){return bounds&&Number.isFinite(bounds.getWest())&&Number.isFinite(bounds.getSouth())&&Number.isFinite(bounds.getEast())&&Number.isFinite(bounds.getNorth())&&bounds.getEast()>bounds.getWest()&&bounds.getNorth()>bounds.getSouth()}
-function viewBoundsWithPadding(pad=.18){
+function clampToSpain(bounds){
+  const west=clamp(bounds.getWest(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
+  const east=clamp(bounds.getEast(),SPAIN_BOUNDS.getWest(),SPAIN_BOUNDS.getEast());
+  const south=clamp(bounds.getSouth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
+  const north=clamp(bounds.getNorth(),SPAIN_BOUNDS.getSouth(),SPAIN_BOUNDS.getNorth());
+  if(east<=west||north<=south)return map?.getBounds?.()||SPAIN_BOUNDS;
+  return L.latLngBounds([south,west],[north,east]);
+}
+function expandedViewBounds(pad){
   const b=map.getBounds();
   const latPad=(b.getNorth()-b.getSouth())*pad;
   const lngPad=(b.getEast()-b.getWest())*pad;
-  return L.latLngBounds([b.getSouth()-latPad,b.getWest()-lngPad],[b.getNorth()+latPad,b.getEast()+lngPad]);
+  return clampToSpain(L.latLngBounds([b.getSouth()-latPad,b.getWest()-lngPad],[b.getNorth()+latPad,b.getEast()+lngPad]));
 }
-function projectedBbox(bounds){
+function mercatorBbox(bounds){
   const sw=map.options.crs.project(bounds.getSouthWest());
   const ne=map.options.crs.project(bounds.getNorthEast());
-  return [sw.x,sw.y,ne.x,ne.y].map(v=>safeNum(v).toFixed(2)).join(',');
+  return [sw.x,sw.y,ne.x,ne.y].map(v=>Number(v).toFixed(2)).join(',');
 }
-function latLngBbox(bounds){return [bounds.getWest(),bounds.getSouth(),bounds.getEast(),bounds.getNorth()].map(v=>safeNum(v).toFixed(7)).join(',')}
-function buildServiceUrl(service,bounds,width,height,stamp){
+function lonLatBbox(bounds){return [bounds.getWest(),bounds.getSouth(),bounds.getEast(),bounds.getNorth()].map(v=>Number(v).toFixed(7)).join(',')}
+function buildMapUrl(service,bounds,width,height,token){
   const w=String(Math.round(width));const h=String(Math.round(height));
   if(service.type==='api'){
-    const params=new URLSearchParams({f:service.format||'png',bbox:latLngBbox(bounds),width:w,height:h,_:stamp});
+    const params=new URLSearchParams({f:service.format||'png',bbox:lonLatBbox(bounds),width:w,height:h,_:token});
     return `${service.url}?${params.toString()}`;
   }
   const params=new URLSearchParams({
     SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetMap',LAYERS:service.layers,STYLES:'',SRS:'EPSG:3857',
-    BBOX:projectedBbox(bounds),WIDTH:w,HEIGHT:h,FORMAT:service.format||'image/png',TRANSPARENT:'FALSE',BGCOLOR:'0xD8DDCF',_:stamp
+    BBOX:mercatorBbox(bounds),WIDTH:w,HEIGHT:h,FORMAT:service.format||'image/png',TRANSPARENT:'FALSE',BGCOLOR:'0xD8DDCF',_:token
   });
   return `${service.url}?${params.toString()}`;
 }
-function loadImage(src,timeout=28000){
+function preloadImage(src,timeout=26000){
   return new Promise((resolve,reject)=>{
     const img=new Image();let done=false;
-    const finish=(ok)=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
+    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);ok?resolve(img):reject(new Error('No cargó el plano'))};
     const timer=setTimeout(()=>finish(false),timeout);
-    img.onload=()=>finish(true);
+    img.onload=()=>finish(img.naturalWidth>32&&img.naturalHeight>32);
     img.onerror=()=>finish(false);
     img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer-when-downgrade';img.src=src;
   })
 }
-async function firstWorkingUrl(services,bounds,width,height,stamp,timeout){
-  let lastErr;
-  for(const service of services){
-    const url=buildServiceUrl(service,bounds,width,height,stamp);
-    try{await loadImage(url,timeout);return url}catch(err){lastErr=err;console.warn('Plano falló, pruebo respaldo',service.type,err)}
+async function firstServiceUrl(config,bounds,width,height,reason,timeout=26000){
+  let lastError;
+  const token=`${MAP_VERSION}-${reason}-z${map.getZoom()}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  for(const service of config.services){
+    const url=buildMapUrl(service,bounds,width,height,token);
+    try{await preloadImage(url,timeout);return url}catch(err){lastError=err;console.warn('Servicio de plano falló; pruebo respaldo',service.type,err)}
   }
-  throw lastErr||new Error('No cargó ningún servicio de plano');
+  throw lastError||new Error('No cargó ningún servicio de plano');
 }
 
-class FullViewMapLayer{
+class SingleImageMapLayer{
   constructor(config){
-    this.config=config;this.map=null;this.overview=null;this.current=null;this.next=null;this.seq=0;this.overviewSeq=0;this.timer=null;this.lastRefreshAt=0;
-    this.onResize=()=>this.schedule('resize',120);this.onMoveEnd=()=>this.schedule('move',90);this.onZoomEnd=()=>this.schedule('zoom',40);this.onViewReset=()=>this.schedule('reset',60);
+    this.config=config;this.map=null;this.container=null;this.overview=null;this.current=null;this.next=null;this.seq=0;this.overviewSeq=0;this.timer=null;this.lastZoom=null;
+    this.boundPosition=()=>this.positionAll();
+    this.boundMoveEnd=()=>this.schedule('mover',90);
+    this.boundZoomEnd=()=>this.schedule('zoom',30);
+    this.boundResize=()=>this.schedule('resize',120);
   }
   addTo(mapInstance){
     this.map=mapInstance;
+    this.container=document.createElement('div');
+    this.container.className='single-wms-layer';
+    this.map.getContainer().insertBefore(this.container,this.map.getContainer().firstChild);
+    this.map.on('move zoom resize viewreset',this.boundPosition);
+    this.map.on('moveend',this.boundMoveEnd);
+    this.map.on('zoomend',this.boundZoomEnd);
+    this.map.on('resize',this.boundResize);
     this.loadOverview('inicio');
-    this.refreshNow('inicio');
-    this.map.on('moveend',this.onMoveEnd);
-    this.map.on('zoomend',this.onZoomEnd);
-    this.map.on('resize',this.onResize);
-    this.map.on('viewreset',this.onViewReset);
+    this.refreshNow('inicio',true);
     return this;
   }
   remove(){
     clearTimeout(this.timer);this.seq++;this.overviewSeq++;
     if(this.map){
-      this.map.off('moveend',this.onMoveEnd);this.map.off('zoomend',this.onZoomEnd);this.map.off('resize',this.onResize);this.map.off('viewreset',this.onViewReset);
-      [this.overview,this.current,this.next].forEach(layer=>{if(layer){try{this.map.removeLayer(layer)}catch{}}});
+      this.map.off('move zoom resize viewreset',this.boundPosition);
+      this.map.off('moveend',this.boundMoveEnd);this.map.off('zoomend',this.boundZoomEnd);this.map.off('resize',this.boundResize);
     }
-    this.map=null;this.overview=null;this.current=null;this.next=null;
+    if(this.container)this.container.remove();
+    this.map=null;this.container=null;this.overview=null;this.current=null;this.next=null;
   }
-  schedule(reason='vista',delay=90){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(reason),delay)}
-  detailScale(){
-    const z=this.map?.getZoom?.()||6;
-    const dpr=window.devicePixelRatio||1;
-    const wanted=z>=17?3.6:z>=15?3.2:z>=13?2.75:z>=11?2.35:z>=9?2.05:1.7;
-    return clamp(Math.max(dpr,wanted),1.5,3.6);
+  schedule(reason='vista',delay=90){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(reason,false),delay)}
+  positionEntry(entry){
+    if(!entry||!entry.img||!this.map)return;
+    const nw=this.map.latLngToContainerPoint(entry.bounds.getNorthWest());
+    const se=this.map.latLngToContainerPoint(entry.bounds.getSouthEast());
+    const left=Math.round(nw.x),top=Math.round(nw.y),width=Math.max(1,Math.round(se.x-nw.x)),height=Math.max(1,Math.round(se.y-nw.y));
+    entry.img.style.transform=`translate3d(${left}px,${top}px,0)`;
+    entry.img.style.width=`${width}px`;entry.img.style.height=`${height}px`;
   }
-  sizeFor(bounds,scale=1){
+  positionAll(){[this.overview,this.current,this.next].forEach(e=>this.positionEntry(e))}
+  makeEntry(url,bounds,className,opacity=1){
+    const img=document.createElement('img');
+    img.className=className;img.alt='';img.decoding='async';img.draggable=false;img.style.opacity=String(opacity);img.src=url;
+    this.container.appendChild(img);
+    const entry={img,bounds};this.positionEntry(entry);return entry;
+  }
+  removeEntry(entry){if(entry?.img?.parentNode)entry.img.parentNode.removeChild(entry.img)}
+  overviewSize(){
     const size=this.map.getSize();
-    const view=this.map.getBounds();
+    const ratio=Math.max(1,size.y/Math.max(size.x,1));
+    return {width:clamp(Math.round(size.x*1.9),1100,2200),height:clamp(Math.round(size.x*1.9*ratio),1100,3200)};
+  }
+  detailPad(){
+    const z=this.map.getZoom();
+    return z>=17?.55:z>=15?.7:z>=13?.9:z>=10?1.15:1.35;
+  }
+  detailScale(){
+    const z=this.map.getZoom();const dpr=window.devicePixelRatio||1;
+    const base=z>=17?3.2:z>=15?2.85:z>=13?2.45:z>=11?2.15:1.85;
+    return clamp(Math.max(dpr,base),1.5,3.2);
+  }
+  sizeFor(bounds,scale){
+    const size=this.map.getSize();const view=this.map.getBounds();
     const xRatio=Math.max(1,(bounds.getEast()-bounds.getWest())/Math.max(.000001,view.getEast()-view.getWest()));
     const yRatio=Math.max(1,(bounds.getNorth()-bounds.getSouth())/Math.max(.000001,view.getNorth()-view.getSouth()));
-    return {width:clamp(Math.round(size.x*scale*xRatio),720,4096),height:clamp(Math.round(size.y*scale*yRatio),720,4096)};
+    return {width:clamp(Math.round(size.x*scale*xRatio),900,4096),height:clamp(Math.round(size.y*scale*yRatio),900,4096)};
   }
   async loadOverview(reason='base'){
-    if(!this.map||!navigator.onLine)return;
-    const token=++this.overviewSeq;
-    const size=this.map.getSize();
-    const ratio=Math.max(1,size.y/Math.max(1,size.x));
-    const width=clamp(Math.round(size.x*1.55),900,1800);
-    const height=clamp(Math.round(width*ratio),900,2600);
-    const stamp=`${reason}-base-${Date.now()}-${token}`;
+    if(!this.map||!this.container||!navigator.onLine)return;
+    const token=++this.overviewSeq;const {width,height}=this.overviewSize();
     try{
-      const url=await firstWorkingUrl(this.config.services,SPAIN_BOUNDS,width,height,stamp,30000);
+      const url=await firstServiceUrl(this.config,SPAIN_BOUNDS,width,height,`${reason}-base`,28000);
       if(!this.map||token!==this.overviewSeq)return;
-      const layer=L.imageOverlay(url,SPAIN_BOUNDS,{pane:'baseMapPane',opacity:1,interactive:false,attribution:this.config.attribution,className:'full-map-image full-map-overview'}).addTo(this.map);
-      if(this.overview&&this.overview!==layer){try{this.map.removeLayer(this.overview)}catch{}}
-      this.overview=layer;
-    }catch(err){console.warn('No cargó plano base',err)}
+      const entry=this.makeEntry(url,SPAIN_BOUNDS,'single-wms-img single-wms-overview',1);
+      const old=this.overview;this.overview=entry;this.positionAll();if(old)this.removeEntry(old);
+    }catch(err){console.warn('No cargó la base general de España',err)}
   }
-  async refreshNow(reason='vista'){
+  async refreshNow(reason='vista',force=false){
     clearTimeout(this.timer);
-    if(!this.map||!navigator.onLine)return;
+    if(!this.map||!this.container||!navigator.onLine)return;
+    const zoom=this.map.getZoom();
+    const currentView=this.map.getBounds();
+    if(!force&&this.current&&this.lastZoom===zoom&&this.current.bounds.pad(-0.18).contains(currentView))return;
     const token=++this.seq;
-    const z=this.map.getZoom();
-    const pad=z>=16?.10:z>=14?.13:z>=11?.17:.22;
-    const bounds=viewBoundsWithPadding(pad);
-    if(!validBounds(bounds)){this.schedule('bounds',180);return}
-    const scale=this.detailScale();
-    const {width,height}=this.sizeFor(bounds,scale);
-    const stamp=`${reason}-z${z.toFixed(2)}-${Date.now()}-${token}`;
+    const bounds=expandedViewBounds(this.detailPad());
+    if(!validBounds(bounds)){this.schedule('bounds',160);return}
+    const {width,height}=this.sizeFor(bounds,this.detailScale());
     try{
-      const url=await firstWorkingUrl(this.config.services,bounds,width,height,stamp,30000);
+      const url=await firstServiceUrl(this.config,bounds,width,height,`${reason}-detalle`,30000);
       if(!this.map||token!==this.seq)return;
-      const layer=L.imageOverlay(url,bounds,{pane:'detailMapPane',opacity:0,interactive:false,attribution:this.config.attribution,className:'full-map-image full-map-detail'}).addTo(this.map);
-      this.next=layer;
-      requestAnimationFrame(()=>{
-        if(!this.map||token!==this.seq)return;
-        layer.setOpacity(1);
-        setTimeout(()=>{if(!this.map||token!==this.seq)return;if(this.current&&this.current!==layer){try{this.map.removeLayer(this.current)}catch{}}this.current=layer;this.next=null;this.lastRefreshAt=Date.now()},80);
-      });
+      const entry=this.makeEntry(url,bounds,'single-wms-img single-wms-detail',0);
+      this.next=entry;this.positionAll();
+      requestAnimationFrame(()=>{if(!this.map||token!==this.seq)return;entry.img.style.opacity='1';setTimeout(()=>{if(!this.map||token!==this.seq)return;const old=this.current;this.current=entry;this.next=null;this.lastZoom=this.map.getZoom();if(old)this.removeEntry(old);this.positionAll()},180)});
     }catch(err){
-      console.warn('No cargó detalle; se mantiene plano anterior',err);
+      console.warn('No cargó el detalle; se mantiene el plano anterior',err);
       if(!this.overview)this.loadOverview('respaldo');
     }
   }
 }
 
-function refreshMap(reason='manual'){if(!map)return;map.invalidateSize(true);if(activeMapLayer){activeMapLayer.loadOverview(reason);activeMapLayer.refreshNow(reason)}}
+function refreshMap(reason='manual'){if(!map)return;map.invalidateSize(true);if(activeMapLayer){if(!activeMapLayer.overview||['boton','arranque','online','nav','resize','orientationchange'].includes(reason))activeMapLayer.loadOverview(reason);activeMapLayer.refreshNow(reason,true)}}
 function setMapLayer(key){
   if(!MAP_LAYERS[key])key='ign';
   state.activeLayerKey=key;localStorage.setItem('c2-map-layer',key);
   if(activeMapLayer){activeMapLayer.remove();activeMapLayer=null}
-  activeMapLayer=new FullViewMapLayer(MAP_LAYERS[key]).addTo(map);
+  activeMapLayer=new SingleImageMapLayer(MAP_LAYERS[key]).addTo(map);
   const select=$('#mapLayerSelect');if(select)select.value=key;
 }
 function initMap(){
   map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,minZoom:5,maxZoom:19,maxBounds:SPAIN_BOUNDS,maxBoundsViscosity:.65}).setView([40.4168,-3.7038],6);
-  map.createPane('baseMapPane');map.getPane('baseMapPane').style.zIndex=180;map.getPane('baseMapPane').style.pointerEvents='none';
-  map.createPane('detailMapPane');map.getPane('detailMapPane').style.zIndex=190;map.getPane('detailMapPane').style.pointerEvents='none';
   map.createPane('positionPane');map.getPane('positionPane').style.zIndex=950;map.getPane('positionPane').style.pointerEvents='none';
   L.control.zoom({position:'bottomright'}).addTo(map);
   const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
   $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
   $('#reloadMapBtn')?.addEventListener('click',()=>{clearTimeout(mapRefreshTimer);refreshMap('boton')});
   map.on('zoomstart movestart',()=>{clearTimeout(mapRefreshTimer)});
-  map.on('zoomend',()=>{clearTimeout(mapRefreshTimer);mapRefreshTimer=setTimeout(()=>refreshMap('zoomend'),70)});
-  map.on('moveend',()=>{clearTimeout(mapRefreshTimer);mapRefreshTimer=setTimeout(()=>refreshMap('moveend'),120)});
-  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(()=>refreshMap(ev),260)));
-  setTimeout(()=>refreshMap('arranque'),380);
+  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(()=>refreshMap(ev),280)));
+  setTimeout(()=>refreshMap('arranque'),450);
 }
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
@@ -210,4 +234,4 @@ $('#settingsForm').addEventListener('submit',e=>{e.preventDefault();state.settin
 $('#exportBtn').addEventListener('click',()=>{const payload={version:1,exportedAt:new Date().toISOString(),settings:state.settings,messages:state.messages,markers:state.markers};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download=`seccion-c2-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 $('#importInput').addEventListener('change',async e=>{try{const data=JSON.parse(await e.target.files[0].text());if(!data||data.version!==1)throw new Error('Formato no compatible');state.settings=data.settings||state.settings;state.messages=Array.isArray(data.messages)?data.messages:[];state.markers=Array.isArray(data.markers)?data.markers:[];persist('c2-settings',state.settings);persist('c2-messages',state.messages);persist('c2-markers',state.markers);location.reload()}catch(err){alert(`Importación fallida: ${err.message}`)}});
 
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=mapzoom-real-v1').then(reg=>reg.update()).catch(console.error));initNav();updateNetwork();loadSettings();renderMessages();renderDocuments();
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=wms-no-tiles-v3').then(reg=>reg.update()).catch(console.error));initNav();updateNetwork();loadSettings();renderMessages();renderDocuments();
