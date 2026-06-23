@@ -8,43 +8,120 @@ function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>
 function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión'}
 window.addEventListener('online',()=>{updateNetwork();activeLayer?.refreshNow()});window.addEventListener('offline',updateNetwork);
 
+const TRANSPARENT_TILE='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 const MAP_LAYERS={
-  ign:{label:'IGN topográfico continuo',type:'wms',url:'https://www.ign.es/wms-inspire/mapa-raster',layers:'mtn_rasterizado',format:'image/png',attribution:'© Instituto Geográfico Nacional / CNIG',pad:.78,scale:1.18,maxImage:2200},
-  pnoa:{label:'Vista aérea continua PNOA',type:'wms',url:'https://www.ign.es/wms-inspire/pnoa-ma',layers:'OI.OrthoimageCoverage',format:'image/jpeg',attribution:'© Instituto Geográfico Nacional / PNOA',pad:.68,scale:1.08,maxImage:2000}
+  ign:{label:'IGN topográfico',url:'https://tms-mapa-raster.ign.es/1.0.0/mapa-raster/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / CNIG',maxNativeZoom:18},
+  pnoa:{label:'Vista aérea PNOA',url:'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{-y}.jpeg',attribution:'© Instituto Geográfico Nacional / PNOA',maxNativeZoom:18}
 };
-let activeLayer=null,activeTileLayer=null,attributionControl=null,mapBusyTimer=null;
+let activeLayer=null,attributionControl=null;
 
-class ContinuousWmsLayer{
-  constructor(config){this.config=config;this.map=null;this.current=null;this.next=null;this.timer=null;this.seq=0;this.errorCount=0;this.boundSchedule=()=>this.schedule();this.boundRefresh=()=>this.refreshNow()}
-  addTo(mapInstance){this.map=mapInstance;this.map.on('moveend zoomend resize',this.boundSchedule);this.map.on('viewreset',this.boundRefresh);this.refreshNow();return this}
-  remove(){if(!this.map)return;this.map.off('moveend zoomend resize',this.boundSchedule);this.map.off('viewreset',this.boundRefresh);clearTimeout(this.timer);this.seq++;if(this.current)this.map.removeLayer(this.current);if(this.next)this.map.removeLayer(this.next);this.current=null;this.next=null;hideMapBusy();this.map=null}
-  schedule(delay=90){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refreshNow(),delay)}
-  refreshNow(){clearTimeout(this.timer);if(!this.map)return;const request=this.buildRequestForCurrentView();if(!request){this.schedule(250);return}this.loadRequest(request);}
-  buildRequestForCurrentView(){const size=this.map.getSize();if(size.x<2||size.y<2)return null;const pad=this.config.pad??.7;const bounds=paddedLatLngBounds(this.map,pad);return this.buildRequest(bounds,size,pad)}
-  buildRequestForTarget(center,zoom){const size=this.map.getSize();if(size.x<2||size.y<2)return null;const pad=this.config.pad??.7;const bounds=boundsForView(this.map,center,zoom,pad);return this.buildRequest(bounds,size,pad)}
-  buildRequest(bounds,size,pad=0){const projectedBounds=this.projectBounds(bounds);const dpr=Math.min(Math.max(window.devicePixelRatio||1,1),1.35);const layerScale=this.config.scale??1.12;const scale=dpr*layerScale;const extentScale=1+(2*pad);const maxImage=this.config.maxImage??2200;const width=clamp(Math.round(size.x*extentScale*scale),480,maxImage);const height=clamp(Math.round(size.y*extentScale*scale),480,maxImage);const url=this.getMapUrl(projectedBounds,width,height);return{url,bounds}}
-  loadRequest(request,{moveTo=null,onDone=null,onFail=null}={}){const token=++this.seq;const img=new Image();img.decoding='async';img.onload=()=>{if(token!==this.seq||!this.map)return;const layer=L.imageOverlay(request.url,request.bounds,{pane:'continuousMapPane',interactive:false,opacity:1,className:'continuous-map-image'});layer.addTo(this.map);const old=this.current;this.current=layer;this.errorCount=0;if(moveTo)this.map.setView(moveTo.center,moveTo.zoom,{animate:false});setTimeout(()=>{if(old&&this.map&&old!==this.current)this.map.removeLayer(old)},80);if(onDone)onDone();};img.onerror=()=>{if(token!==this.seq)return;this.errorCount++;if(onFail)onFail();else if(this.errorCount<4)this.schedule(650);else showTileFallback();};img.src=request.url;}
-  preloadAndMove(center,zoom,onDone){if(!this.map)return false;clearTimeout(this.timer);const request=this.buildRequestForTarget(center,zoom);if(!request)return false;this.loadRequest(request,{moveTo:{center,zoom},onDone,onFail:()=>{showTileFallback();this.map.setView(center,zoom,{animate:false});this.schedule(650);if(onDone)onDone();}});return true}
-  projectBounds(bounds){const sw=this.map.options.crs.project(bounds.getSouthWest());const ne=this.map.options.crs.project(bounds.getNorthEast());return{minx:Math.min(sw.x,ne.x),miny:Math.min(sw.y,ne.y),maxx:Math.max(sw.x,ne.x),maxy:Math.max(sw.y,ne.y)}}
-  getMapUrl(b,width,height){const params=new URLSearchParams({SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetMap',LAYERS:this.config.layers,STYLES:'',SRS:'EPSG:3857',BBOX:[b.minx,b.miny,b.maxx,b.maxy].join(','),WIDTH:String(width),HEIGHT:String(height),FORMAT:this.config.format,TRANSPARENT:'false'});return`${this.config.url}?${params.toString()}`}
+class FastIgnTileLayer{
+  constructor(config){this.config=config;this.map=null;this.layer=null;this.prefetchDone=new Set();this.boundPrefetch=()=>this.prefetchVisibleTiles(2);}
+  addTo(mapInstance){
+    this.map=mapInstance;
+    this.layer=L.tileLayer(this.config.url,{
+      attribution:this.config.attribution,
+      minZoom:3,
+      maxZoom:20,
+      maxNativeZoom:this.config.maxNativeZoom||18,
+      tileSize:256,
+      detectRetina:false,
+      updateWhenIdle:false,
+      updateWhenZooming:false,
+      keepBuffer:8,
+      crossOrigin:true,
+      noWrap:true,
+      errorTileUrl:TRANSPARENT_TILE,
+      className:'ign-fast-tile'
+    });
+    this.layer.on('tileerror',e=>this.retryTile(e));
+    this.layer.on('load',()=>this.prefetchVisibleTiles(2));
+    this.layer.addTo(this.map);
+    this.map.on('moveend zoomend resize',this.boundPrefetch);
+    setTimeout(()=>this.prefetchVisibleTiles(3),250);
+    return this;
+  }
+  remove(){
+    if(!this.map)return;
+    this.map.off('moveend zoomend resize',this.boundPrefetch);
+    if(this.layer){this.layer.off();this.map.removeLayer(this.layer)}
+    this.layer=null;this.map=null;this.prefetchDone.clear();
+  }
+  refreshNow(){
+    if(!this.map||!this.layer)return;
+    this.prefetchDone.clear();
+    this.layer.redraw();
+    setTimeout(()=>this.prefetchVisibleTiles(3),120);
+  }
+  preloadAndMove(center,zoom,onDone){
+    if(!this.map)return false;
+    this.map.setView(center,zoom,{animate:false});
+    setTimeout(()=>{this.prefetchVisibleTiles(3);if(onDone)onDone();},160);
+    return true;
+  }
+  retryTile(e){
+    const tile=e?.tile;if(!tile)return;
+    if(tile.dataset.retryDone==='1'){tile.style.visibility='hidden';return}
+    tile.dataset.retryDone='1';
+    const original=tile.src;
+    setTimeout(()=>{tile.style.visibility='';tile.src=original+(original.includes('?')?'&':'?')+'retry='+Date.now()},500);
+  }
+  tileUrl(x,y,z){
+    const limit=Math.pow(2,z)-1;
+    const invY=limit-y;
+    return this.config.url.replace('{z}',z).replace('{x}',x).replace('{-y}',invY).replace('{y}',y);
+  }
+  prefetchVisibleTiles(extra=2){
+    if(!this.map||!this.layer||!navigator.onLine)return;
+    const z=Math.round(this.map.getZoom());
+    if(z<3||z>18)return;
+    const tileSize=256;
+    const bounds=this.map.getPixelBounds();
+    const min=bounds.min.divideBy(tileSize).floor().subtract([extra,extra]);
+    const max=bounds.max.divideBy(tileSize).floor().add([extra,extra]);
+    const limit=Math.pow(2,z)-1;
+    const minX=Math.max(0,min.x),maxX=Math.min(limit,max.x),minY=Math.max(0,min.y),maxY=Math.min(limit,max.y);
+    const total=(maxX-minX+1)*(maxY-minY+1);
+    if(total<=0||total>120)return;
+    for(let x=minX;x<=maxX;x++)for(let y=minY;y<=maxY;y++){
+      const key=`${z}/${x}/${y}`;
+      if(this.prefetchDone.has(key))continue;
+      this.prefetchDone.add(key);
+      const img=new Image();
+      img.decoding='async';
+      img.src=this.tileUrl(x,y,z);
+    }
+    if(this.prefetchDone.size>500)this.prefetchDone=new Set([...this.prefetchDone].slice(-240));
+  }
 }
-function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
-function paddedLatLngBounds(mapInstance,pad){const size=mapInstance.getSize();const padX=size.x*pad,padY=size.y*pad;const nw=mapInstance.containerPointToLatLng([-padX,-padY]);const se=mapInstance.containerPointToLatLng([size.x+padX,size.y+padY]);return L.latLngBounds(nw,se)}
-function boundsForView(mapInstance,center,zoom,pad){const size=mapInstance.getSize();const c=mapInstance.project(center,zoom);const half=L.point(size.x/2,size.y/2);const padPoint=L.point(size.x*pad,size.y*pad);const nwPoint=c.subtract(half).subtract(padPoint);const sePoint=c.add(half).add(padPoint);const nw=mapInstance.unproject(nwPoint,zoom);const se=mapInstance.unproject(sePoint,zoom);return L.latLngBounds(nw,se)}
-function showMapBusy(){const el=$('#mapLoading');if(el)el.hidden=true}
-function hideMapBusy(){const el=$('#mapLoading');if(el)el.hidden=true;clearTimeout(mapBusyTimer)}
-function showTileFallback(){const selected=$('#mapLayerSelect')?.value;if(selected&&selected!=='ign')setMapLayer('ign')}
-function setMapLayer(key){if(key==='osm'||key==='esri'||!MAP_LAYERS[key])key='ign';const cfg=MAP_LAYERS[key];localStorage.setItem('c2-map-layer',key);if(activeLayer){activeLayer.remove();activeLayer=null}if(activeTileLayer){map.removeLayer(activeTileLayer);activeTileLayer=null}activeLayer=new ContinuousWmsLayer(cfg).addTo(map);if(attributionControl)attributionControl.setPrefix(false);const select=$('#mapLayerSelect');if(select)select.value=key;setTimeout(()=>map.invalidateSize(true),80)}
-function reloadMap(){map.invalidateSize(true);if(activeLayer)activeLayer.refreshNow()}
-
-function initMap(){map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:false,zoomAnimation:true,markerZoomAnimation:false,inertia:true,worldCopyJump:false,maxZoom:20,minZoom:3}).setView([40.4168,-3.7038],6);map.createPane('continuousMapPane');map.getPane('continuousMapPane').style.zIndex=200;map.createPane('positionPane');map.getPane('positionPane').style.zIndex=900;map.getPane('positionPane').style.pointerEvents='none';L.control.zoom({position:'bottomright'}).addTo(map);attributionControl=map.attributionControl;const saved=localStorage.getItem('c2-map-layer')||'ign';setMapLayer(saved);$('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));$('#reloadMapBtn')?.addEventListener('click',reloadMap);['move','moveend','zoom','zoomend','resize','viewreset'].forEach(ev=>map.on(ev,refreshUserLocationOverlay));map.on('zoomanim',()=>requestAnimationFrame(refreshUserLocationOverlay));['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(()=>{map.invalidateSize(true);activeLayer?.refreshNow();refreshUserLocationOverlay()},300)));setTimeout(()=>{map.invalidateSize(true);activeLayer?.refreshNow();refreshUserLocationOverlay()},300);setTimeout(()=>{map.invalidateSize(true);activeLayer?.refreshNow();refreshUserLocationOverlay()},1200)}
+function setMapLayer(key){
+  if(!MAP_LAYERS[key])key='ign';
+  localStorage.setItem('c2-map-layer',key);
+  if(activeLayer){activeLayer.remove();activeLayer=null}
+  activeLayer=new FastIgnTileLayer(MAP_LAYERS[key]).addTo(map);
+  const select=$('#mapLayerSelect');if(select)select.value=key;
+  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},120);
+}
+function reloadMap(){map.invalidateSize(true);activeLayer?.refreshNow();refreshUserLocationOverlay()}
+function initMap(){
+  map=L.map('map',{zoomControl:false,preferCanvas:false,fadeAnimation:true,zoomAnimation:true,markerZoomAnimation:true,inertia:true,worldCopyJump:false,maxZoom:20,minZoom:3,maxBounds:[[25,-20],[46,6]],maxBoundsViscosity:.15}).setView([40.4168,-3.7038],6);
+  map.createPane('positionPane');map.getPane('positionPane').style.zIndex=900;map.getPane('positionPane').style.pointerEvents='none';
+  L.control.zoom({position:'bottomright'}).addTo(map);attributionControl=map.attributionControl;
+  const saved=localStorage.getItem('c2-map-layer');setMapLayer(saved&&MAP_LAYERS[saved]?saved:'ign');
+  $('#mapLayerSelect')?.addEventListener('change',e=>setMapLayer(e.target.value));
+  $('#reloadMapBtn')?.addEventListener('click',reloadMap);
+  ['move','moveend','zoom','zoomend','resize','viewreset'].forEach(ev=>map.on(ev,refreshUserLocationOverlay));
+  ['resize','orientationchange'].forEach(ev=>window.addEventListener(ev,()=>setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},260)));
+  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},300);
+  setTimeout(()=>{map.invalidateSize(true);activeLayer?.prefetchVisibleTiles?.(3);refreshUserLocationOverlay()},1200);
+}
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
 function drawMarkers(){state.markers.forEach(m=>L.marker([m.lat,m.lng],{icon:iconFor(m.type),zIndexOffset:600}).addTo(map).bindPopup(`<strong>${escapeHtml(m.name)}</strong><br>${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`))}
 function userPositionIcon(heading=0){const h=Number.isFinite(heading)?heading:0;return L.divIcon({className:'user-position-icon',html:`<div class="user-position-wrap user-position-wrap-v2" style="--heading:${h}deg"><div class="user-position-bearing"></div><div class="user-position-center"></div></div>`,iconSize:[56,56],iconAnchor:[28,28]})}
-function ensureUserLocationOverlay(){const container=map?.getContainer();if(!container)return null;let el=container.querySelector('#userLocationOverlay');if(!el){el=document.createElement('div');el.id='userLocationOverlay';el.className='user-location-overlay';el.hidden=true;el.innerHTML='<div class="user-location-bearing"></div><div class="user-location-center"></div>';container.appendChild(el)}return el}
-function refreshUserLocationOverlay(){if(!map||!state.lastUserLatLng)return;const el=ensureUserLocationOverlay();if(!el)return;const pt=map.latLngToContainerPoint(state.lastUserLatLng);el.style.left=`${Math.round(pt.x)}px`;el.style.top=`${Math.round(pt.y)}px`;el.style.setProperty('--heading',`${Number.isFinite(state.lastHeading)?state.lastHeading:0}deg`);el.hidden=false}
-function updatePosition(pos,center=true){const{latitude:lat,longitude:lng,accuracy,heading}=pos.coords;const h=Number.isFinite(heading)?heading:state.lastHeading;state.lastHeading=Number.isFinite(h)?h:0;$('#coords').textContent=`${lat.toFixed(6)}, ${lng.toFixed(6)}`;$('#accuracy').textContent=`Precisión: ±${Math.round(accuracy)} m`;const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='GPS activo: punto central colocado';if(state.accuracyCircle){map.removeLayer(state.accuracyCircle);state.accuracyCircle=null}const latlng=L.latLng(lat,lng);state.lastUserLatLng=latlng;state.lastUserAccuracy=accuracy;refreshUserLocationOverlay();if(state.userMarker){state.userMarker.setLatLng(latlng);state.userMarker.setIcon(userPositionIcon(state.lastHeading))}else state.userMarker=L.marker(latlng,{icon:userPositionIcon(state.lastHeading),pane:'positionPane',zIndexOffset:6000,keyboard:false,interactive:false,riseOnHover:false}).addTo(map);state.userMarker.setZIndexOffset(6000);const afterMove=()=>{if(state.userMarker)state.userMarker.setLatLng(latlng);refreshUserLocationOverlay();setTimeout(refreshUserLocationOverlay,80)};if(center){const targetZoom=Math.max(map.getZoom(),17);if(activeLayer&&typeof activeLayer.preloadAndMove==='function'){const started=activeLayer.preloadAndMove(latlng,targetZoom,afterMove);if(started)return}map.setView(latlng,targetZoom,{animate:false});setTimeout(()=>{activeLayer?.refreshNow();afterMove()},350)}else afterMove()}
+function ensureUserLocationOverlay(){return null}
+function refreshUserLocationOverlay(){/* solo queda el marcador GPS real de Leaflet */}px`;el.style.top=`${Math.round(pt.y)}px`;el.style.setProperty('--heading',`${Number.isFinite(state.lastHeading)?state.lastHeading:0}deg`);el.hidden=false}
+function updatePosition(pos,center=true){const{latitude:lat,longitude:lng,accuracy,heading}=pos.coords;const h=Number.isFinite(heading)?heading:state.lastHeading;state.lastHeading=Number.isFinite(h)?h:0;$('#coords').textContent=`${lat.toFixed(6)}, ${lng.toFixed(6)}`;$('#accuracy').textContent=`Precisión: ±${Math.round(accuracy)} m`;const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='GPS activo';if(state.accuracyCircle){map.removeLayer(state.accuracyCircle);state.accuracyCircle=null}const latlng=L.latLng(lat,lng);state.lastUserLatLng=latlng;state.lastUserAccuracy=accuracy;refreshUserLocationOverlay();if(state.userMarker){state.userMarker.setLatLng(latlng);state.userMarker.setIcon(userPositionIcon(state.lastHeading))}else state.userMarker=L.marker(latlng,{icon:userPositionIcon(state.lastHeading),pane:'positionPane',zIndexOffset:6000,keyboard:false,interactive:false,riseOnHover:false}).addTo(map);state.userMarker.setZIndexOffset(6000);const afterMove=()=>{if(state.userMarker)state.userMarker.setLatLng(latlng);refreshUserLocationOverlay();setTimeout(refreshUserLocationOverlay,80)};if(center){const targetZoom=Math.max(map.getZoom(),17);if(activeLayer&&typeof activeLayer.preloadAndMove==='function'){const started=activeLayer.preloadAndMove(latlng,targetZoom,afterMove);if(started)return}map.setView(latlng,targetZoom,{animate:false});setTimeout(()=>{activeLayer?.refreshNow();afterMove()},350)}else afterMove()}
 function geoError(e){const msg=e?.message||'Error desconocido';const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent=`GPS: ${msg}`;alert(`No se pudo obtener la posición: ${msg}. Comprueba permisos y que la web esté en HTTPS.`)}
 function askPosition(center=true){if(!navigator.geolocation){alert('Geolocalización no disponible');return}const gpsStatus=$('#gpsStatus');if(gpsStatus)gpsStatus.textContent='Buscando GPS…';navigator.geolocation.getCurrentPosition(p=>updatePosition(p,center),geoError,{enableHighAccuracy:true,timeout:15000,maximumAge:1000})}
 
