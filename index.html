@@ -24,20 +24,27 @@
   <main>
     <section id="view-map" class="view active" aria-label="Mapa">
       <div id="map"></div>
+      <div id="mapShield" class="map-shield" aria-live="polite">
+        <div class="map-shield-box">
+          <span class="map-spinner"></span>
+          <strong data-map-shield-text>Cargando plano completo…</strong>
+          <small>El plano se mostrará de golpe cuando la vista esté lista.</small>
+        </div>
+      </div>
       <div class="map-toolbar">
         <label class="map-layer-picker">Capa
           <select id="baseLayerSelect" aria-label="Seleccionar capa del plano">
-            <option value="osm">Plano rápido</option>
+            <option value="osm">Plano estable</option>
             <option value="ign">IGN España</option>
             <option value="pnoa">Vista aérea PNOA</option>
             <option value="esri">Satélite Esri</option>
           </select>
         </label>
+        <button id="reloadMapBtn" class="action">Recargar plano</button>
         <button id="locateBtn" class="action primary">◎ Mi posición</button>
         <button id="trackBtn" class="action">Iniciar seguimiento</button>
         <button id="addMarkerBtn" class="action">Añadir punto</button>
       </div>
-      <div id="mapLoading" class="map-loading" aria-live="polite">Cargando plano completo…</div>
       <aside id="positionCard" class="position-card">
         <strong>Posición</strong>
         <span id="coords">Sin datos GPS</span>
