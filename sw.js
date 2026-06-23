@@ -1,6 +1,6 @@
-const CACHE='seccion-c2-mapzoom-real-v1';
-const LOCAL=['./','./index.html','./manifest.webmanifest','./assets/css/styles.css?v=mapzoom-real-v1','./assets/js/app.js?v=mapzoom-real-v1','./assets/js/db.js','./assets/icons/icon.svg','./assets/icons/icon-192.svg','./assets/icons/icon-512.svg'];
-self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(LOCAL).catch(()=>undefined)).then(()=>self.skipWaiting()))});
+const CACHE='seccion-c2-wms-no-tiles-v3';
+const LOCAL=['./','./index.html','./manifest.webmanifest','./assets/css/styles.css','./assets/js/app.js','./assets/js/db.js','./assets/icons/icon.svg','./assets/icons/icon-192.svg','./assets/icons/icon-512.svg'];
+self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(LOCAL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
