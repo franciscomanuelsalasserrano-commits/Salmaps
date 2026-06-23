@@ -10,7 +10,7 @@
   <link rel="icon" href="./assets/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./assets/icons/icon-192.svg">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynht6kPZQTVkZOempYfAs5B4zOqc=" crossorigin="">
-  <link rel="stylesheet" href="./assets/css/styles.css">
+  <link rel="stylesheet" href="./assets/css/styles.css?v=planos-continuos-1">
 </head>
 <body>
   <header class="topbar">
@@ -24,22 +24,14 @@
   <main>
     <section id="view-map" class="view active" aria-label="Mapa">
       <div id="map"></div>
-      <div id="mapShield" class="map-shield" aria-live="polite">
-        <div class="map-shield-box">
-          <span class="map-spinner"></span>
-          <strong data-map-shield-text>Cargando plano completo…</strong>
-          <small>El plano se mostrará de golpe cuando la vista esté lista.</small>
-        </div>
-      </div>
+      <div id="mapLoading" class="map-loading" hidden>Cargando plano completo…</div>
       <div class="map-toolbar">
-        <label class="map-layer-picker">Capa
-          <select id="baseLayerSelect" aria-label="Seleccionar capa del plano">
-            <option value="osm">Plano estable</option>
-            <option value="ign">IGN España</option>
-            <option value="pnoa">Vista aérea PNOA</option>
-            <option value="esri">Satélite Esri</option>
-          </select>
-        </label>
+        <select id="mapLayerSelect" class="map-select" aria-label="Capa de plano">
+          <option value="ign">Plano continuo IGN</option>
+          <option value="pnoa">Vista aérea continua PNOA</option>
+          <option value="osm">Plano rápido OSM</option>
+          <option value="esri">Satélite Esri</option>
+        </select>
         <button id="reloadMapBtn" class="action">Recargar plano</button>
         <button id="locateBtn" class="action primary">◎ Mi posición</button>
         <button id="trackBtn" class="action">Iniciar seguimiento</button>
@@ -49,6 +41,7 @@
         <strong>Posición</strong>
         <span id="coords">Sin datos GPS</span>
         <span id="accuracy">Precisión: —</span>
+        <span id="gpsStatus">GPS inactivo</span>
       </aside>
     </section>
 
@@ -101,6 +94,6 @@
   </dialog>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="./assets/js/app.js"></script>
+  <script type="module" src="./assets/js/app.js?v=planos-continuos-1"></script>
 </body>
 </html>
