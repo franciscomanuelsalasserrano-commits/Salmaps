@@ -3,25 +3,27 @@ const $=s=>document.querySelector(s);const $$=s=>[...document.querySelectorAll(s
 const state={settings:JSON.parse(localStorage.getItem('c2-settings')||'{"callsign":"Jefe de sección","unit":"Puesto de mando"}'),messages:JSON.parse(localStorage.getItem('c2-messages')||'[]'),markers:JSON.parse(localStorage.getItem('c2-markers')||'[]'),pendingMarker:null,watchId:null,userMarker:null,accuracyCircle:null};
 const persist=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 
-function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>map.invalidateSize({pan:false}),120)}))}
+function initNav(){$$('.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const name=btn.dataset.view;$$('.nav-btn').forEach(x=>x.classList.toggle('active',x===btn));$$('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));if(name==='map')setTimeout(()=>map.invalidateSize(),100)}))}
 function updateNetwork(){const on=navigator.onLine;$('#onlineDot').className=`dot ${on?'on':'off'}`;$('#onlineText').textContent=on?'Con conexión':'Sin conexión'}
 window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
 
-/* MAPA: carga uniforme al ampliar
-   La clave es no pintar la nueva rejilla de teselas una a una durante el zoom.
-   Leaflet mantiene el plano anterior escalado y esta lógica oculta el nuevo nivel
-   hasta que termina de cargar, evitando el efecto de cuadrados sueltos. */
-const MAP_LAYER_KEY='c2-map-layer';
-const transparentTile='data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="transparent"/></svg>');
+/* MAPA: carga uniforme de planos
+   En Leaflet las teselas llegan por separado por red. Para que no se vea el mosaico
+   a cuadrados, la app cubre el mapa durante cada zoom/cambio de capa y solo lo
+   muestra cuando la vista visible ya ha terminado de cargar o se ha agotado un
+   tiempo máximo de seguridad. */
+const MAP_LAYER_KEY='c2-map-layer-uniform-v8';
+const EMPTY_TILE='data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#101713"/><path d="M0 0H256V256H0Z" fill="none" stroke="#1f2a23" stroke-width="2"/></svg>');
 const tileDefaults={
   minZoom:3,
   maxZoom:19,
   tileSize:256,
   updateWhenIdle:true,
   updateWhenZooming:false,
-  keepBuffer:8,
+  updateInterval:350,
+  keepBuffer:4,
   detectRetina:false,
-  errorTileUrl:transparentTile,
+  errorTileUrl:EMPTY_TILE,
   crossOrigin:false
 };
 const map=L.map('map',{
@@ -30,84 +32,105 @@ const map=L.map('map',{
   fadeAnimation:false,
   zoomAnimation:true,
   markerZoomAnimation:true,
-  worldCopyJump:false,
   minZoom:3,
-  maxZoom:19
+  maxZoom:19,
+  inertia:true,
+  zoomSnap:1,
+  zoomDelta:1,
+  wheelPxPerZoomLevel:120
 }).setView([40.4168,-3.7038],6);
 L.control.zoom({position:'bottomright'}).addTo(map);
 const baseLayerFactories={
   osm:()=>L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{...tileDefaults,subdomains:'abc',maxNativeZoom:19,attribution:'&copy; OpenStreetMap contributors'}),
-  ign:()=>L.tileLayer('https://www.ign.es/wmts/mapa-raster?request=GetTile&service=WMTS&version=1.0.0&layer=MTN&style=default&tilematrixset=GoogleMapsCompatible&format=image/jpeg&tilematrix={z}&tilerow={y}&tilecol={x}',{...tileDefaults,noWrap:true,maxNativeZoom:18,attribution:'&copy; Instituto Geográfico Nacional de España'}),
-  pnoa:()=>L.tileLayer('https://www.ign.es/wmts/pnoa-ma?request=GetTile&service=WMTS&version=1.0.0&layer=OI.OrthoimageCoverage&style=default&tilematrixset=GoogleMapsCompatible&format=image/jpeg&tilematrix={z}&tilerow={y}&tilecol={x}',{...tileDefaults,noWrap:true,maxNativeZoom:19,attribution:'PNOA &copy; Instituto Geográfico Nacional de España'}),
+  ign:()=>L.tileLayer('https://www.ign.es/wmts/mapa-raster?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=MTN&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&FORMAT=image/jpeg&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',{...tileDefaults,noWrap:true,maxNativeZoom:18,attribution:'&copy; Instituto Geográfico Nacional de España'}),
+  pnoa:()=>L.tileLayer('https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=OI.OrthoimageCoverage&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&FORMAT=image/jpeg&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',{...tileDefaults,noWrap:true,maxNativeZoom:19,attribution:'PNOA &copy; Instituto Geográfico Nacional de España'}),
   esri:()=>L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{...tileDefaults,noWrap:true,maxNativeZoom:19,attribution:'Tiles &copy; Esri'})
 };
-let activeBaseLayer=null,activeBaseKey=localStorage.getItem(MAP_LAYER_KEY)||'osm',zoomLoadInProgress=false,loadingTimer=null,uniformHideLoop=null;
+let activeBaseLayer=null;
+let activeBaseKey=localStorage.getItem(MAP_LAYER_KEY)||'osm';
+let loadToken=0;
+let loadTimeout=null;
+let hideTimeout=null;
 if(!baseLayerFactories[activeBaseKey])activeBaseKey='osm';
 if($('#baseLayerSelect'))$('#baseLayerSelect').value=activeBaseKey;
-function setMapLoading(active,text='Cargando plano completo…'){
-  const view=$('#view-map'),box=$('#mapLoading');
-  if(!view||!box)return;
-  box.textContent=text;
-  clearTimeout(loadingTimer);
-  if(active){view.classList.add('map-loading-active');return}
-  loadingTimer=setTimeout(()=>view.classList.remove('map-loading-active'),120);
+function setMapShield(active,text='Cargando plano completo…'){
+  const view=$('#view-map'),shield=$('#mapShield');
+  if(!view||!shield)return;
+  if(text)shield.querySelector('[data-map-shield-text]').textContent=text;
+  clearTimeout(hideTimeout);
+  if(active){view.classList.add('map-uniform-loading');map.getContainer().classList.add('map-busy');return}
+  hideTimeout=setTimeout(()=>{view.classList.remove('map-uniform-loading');map.getContainer().classList.remove('map-busy')},140);
 }
-function tileContainers(){return [...document.querySelectorAll('#map .leaflet-tile-container')]}
-function showTileContainers(){tileContainers().forEach(el=>el.classList.remove('tiles-waiting-full'))}
-function hideNewestZoomContainer(){
-  const containers=tileContainers().filter(el=>el.querySelector('.leaflet-tile'));
-  if(containers.length<2)return;
-  const newest=containers.reduce((best,el)=>{
-    const z=Number.parseInt(el.style.zIndex||'0',10)||0;
-    const bz=Number.parseInt(best.style.zIndex||'0',10)||0;
-    if(z>bz)return el;
-    return best;
-  },containers[0]);
-  newest.classList.add('tiles-waiting-full');
+function beginMapLoad(text='Cargando plano completo…',maxMs=14000){
+  loadToken+=1;
+  const token=loadToken;
+  clearTimeout(loadTimeout);
+  setMapShield(true,text);
+  loadTimeout=setTimeout(()=>finishMapLoad(token),maxMs);
+  return token;
 }
-function bindUniformTileLoading(layer){
+function currentTilesReady(layer){
+  const container=layer?.getContainer?.();
+  if(!container)return true;
+  const tiles=[...container.querySelectorAll('img.leaflet-tile')].filter(img=>img.isConnected&&img.offsetParent!==null);
+  if(!tiles.length)return false;
+  return tiles.every(img=>img.complete&&img.naturalWidth>0);
+}
+function waitForLayerReady(layer,token,attempt=0){
+  if(token!==loadToken)return;
+  if(currentTilesReady(layer)||attempt>90){finishMapLoad(token);return}
+  setTimeout(()=>waitForLayerReady(layer,token,attempt+1),120);
+}
+function finishMapLoad(token){
+  if(token!==loadToken)return;
+  clearTimeout(loadTimeout);
+  requestAnimationFrame(()=>{
+    map.invalidateSize({pan:false});
+    setTimeout(()=>setMapShield(false),120);
+  });
+}
+function bindLayerEvents(layer){
   layer.on('loading',()=>{
-    setMapLoading(true,zoomLoadInProgress?'Ampliando plano…':'Cargando plano completo…');
-    if(zoomLoadInProgress)setTimeout(hideNewestZoomContainer,40);
+    if(layer._uniformSwitchToken){layer._uniformLoadToken=layer._uniformSwitchToken;return}
+    layer._uniformLoadToken=beginMapLoad('Cargando plano completo…');
   });
-  layer.on('tileerror',e=>{
-    if(e?.tile){e.tile.alt='';e.tile.classList.add('leaflet-tile-error');e.tile.style.opacity='0'}
-  });
-  layer.on('load',()=>{
-    zoomLoadInProgress=false;
-    if(uniformHideLoop){clearInterval(uniformHideLoop);uniformHideLoop=null}
-    showTileContainers();
-    setMapLoading(false);
-    setTimeout(()=>map.invalidateSize({pan:false}),50);
-  });
+  layer.on('load',()=>{const token=layer._uniformLoadToken||loadToken;layer._uniformSwitchToken=null;waitForLayerReady(layer,token)});
+  layer.on('tileerror',e=>{if(e?.tile){e.tile.alt='';e.tile.src=EMPTY_TILE;e.tile.classList.add('leaflet-tile-loaded')}});
 }
 function setBaseLayer(key,initial=false){
   if(!baseLayerFactories[key])key='osm';
   const previous=activeBaseLayer;
   const next=baseLayerFactories[key]();
+  const token=beginMapLoad(initial?'Cargando plano completo…':'Cambiando capa…',initial?15000:16000);
   activeBaseKey=key;
   localStorage.setItem(MAP_LAYER_KEY,key);
-  bindUniformTileLoading(next);
-  setMapLoading(true,initial?'Cargando plano completo…':'Cambiando capa…');
-  next.setOpacity(initial?1:0);
+  next._uniformSwitchToken=token;
+  bindLayerEvents(next);
+  next.setOpacity(0);
   next.addTo(map);
   activeBaseLayer=next;
-  let swapped=false;
-  const finishSwap=()=>{
-    if(swapped)return;swapped=true;
+  const reveal=()=>{
+    if(token!==loadToken)return;
     next.setOpacity(1);
     if(previous&&map.hasLayer(previous))map.removeLayer(previous);
-    showTileContainers();
-    setMapLoading(false);
-    setTimeout(()=>map.invalidateSize({pan:false}),80);
+    next._uniformSwitchToken=null;
+    waitForLayerReady(next,token);
   };
-  next.once('load',finishSwap);
-  setTimeout(finishSwap,initial?5000:6500);
+  next.once('load',reveal);
+  setTimeout(reveal,initial?6500:8000);
 }
-map.on('zoomstart',()=>{zoomLoadInProgress=true;setMapLoading(true,'Ampliando plano…');if(uniformHideLoop)clearInterval(uniformHideLoop);uniformHideLoop=setInterval(hideNewestZoomContainer,80)});
-map.on('zoomend',()=>{setTimeout(hideNewestZoomContainer,40);setTimeout(()=>map.invalidateSize({pan:false}),90)});
-map.on('moveend resize',()=>{setTimeout(()=>map.invalidateSize({pan:false}),60)});
+function reloadVisiblePlan(){
+  if(!activeBaseLayer)return;
+  const token=beginMapLoad('Recargando plano…');
+  activeBaseLayer._uniformSwitchToken=token;
+  activeBaseLayer._uniformLoadToken=token;
+  activeBaseLayer.redraw();
+}
+map.on('zoomstart',()=>beginMapLoad('Ampliando plano…',16000));
+map.on('zoomend',()=>setTimeout(()=>waitForLayerReady(activeBaseLayer,loadToken),350));
+map.on('moveend resize',()=>setTimeout(()=>map.invalidateSize({pan:false}),80));
 if($('#baseLayerSelect'))$('#baseLayerSelect').addEventListener('change',e=>setBaseLayer(e.target.value));
+if($('#reloadMapBtn'))$('#reloadMapBtn').addEventListener('click',reloadVisiblePlan);
 setBaseLayer(activeBaseKey,true);
 
 function iconFor(type){const cls=type==='warning'?'warning-marker':type;return L.divIcon({className:'',html:`<div class="tactical-marker ${cls}"></div>`,iconSize:[22,22],iconAnchor:[11,11]})}
@@ -132,4 +155,4 @@ $('#settingsForm').addEventListener('submit',e=>{e.preventDefault();state.settin
 $('#exportBtn').addEventListener('click',()=>{const payload={version:1,exportedAt:new Date().toISOString(),settings:state.settings,messages:state.messages,markers:state.markers};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download=`seccion-c2-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 $('#importInput').addEventListener('change',async e=>{try{const data=JSON.parse(await e.target.files[0].text());if(!data||data.version!==1)throw new Error('Formato no compatible');state.settings=data.settings||state.settings;state.messages=Array.isArray(data.messages)?data.messages:[];state.markers=Array.isArray(data.markers)?data.markers:[];persist('c2-settings',state.settings);persist('c2-messages',state.messages);persist('c2-markers',state.markers);location.reload()}catch(err){alert(`Importación fallida: ${err.message}`)}});
 
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.error));initNav();updateNetwork();loadSettings();renderMessages();renderDocuments();
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').then(reg=>{reg.update();if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'})}).catch(console.error));initNav();updateNetwork();loadSettings();renderMessages();renderDocuments();
