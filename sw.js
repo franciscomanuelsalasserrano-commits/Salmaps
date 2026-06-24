@@ -1,4 +1,4 @@
-const CACHE = 'seccion-c2-landscape-v21';
+const CACHE = 'seccion-c2-pwa-install-v22';
 const LOCAL = [
   './',
   './index.html',
@@ -28,7 +28,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
   // Los planos IGN y las librerías CDN se cargan siempre online, sin caché del Service Worker.
-  // V21: nuevo caché para forzar layout horizontal y manifest landscape.
+  // V22: caché nuevo para instalación PWA y modo pantalla completa.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
@@ -44,3 +44,4 @@ self.addEventListener('fetch', event => {
       .catch(() => caches.match(event.request, { ignoreSearch: true }).then(cached => cached || caches.match('./index.html', { ignoreSearch: true })))
   );
 });
+
