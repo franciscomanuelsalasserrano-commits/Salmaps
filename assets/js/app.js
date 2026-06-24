@@ -13,7 +13,10 @@ const state = {
   lastGpsLatLng: null,
   accuracyCircle: null,
   heading: 0,
-  markerLayers: new Map()
+  markerLayers: new Map(),
+  htmlMarkerLayer: null,
+  htmlMarkerEls: new Map(),
+  waypointPlacementInstalled: false
 };
 const persist = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 
@@ -141,7 +144,7 @@ function waypointFor(type) {
   return WAYPOINTS.get(type) || LEGACY_WAYPOINTS[type] || WAYPOINTS.get('wp') || LEGACY_WAYPOINTS.friendly;
 }
 
-const MAP_VERSION = 'ign-online-speed-v22-pwa-install';
+const MAP_VERSION = 'tacnav-waypoint-html-v26';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -407,7 +410,7 @@ function createIgnSingleImageRenderer() {
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
       : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-SPEED-V22]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
+    console.info('[TACNAV][IGN-WMS-V26]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
 
     // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
     // Esto evita que descargas viejas bloqueen la nueva capa.
@@ -433,7 +436,7 @@ function createIgnSingleImageRenderer() {
       if (img !== loadingImage || id !== requestId) return;
       loadingImage = null;
       loadingUrl = '';
-      console.warn('[SECCION C2][IGN-WMS-SPEED-V22] Error cargando plano', { quality, url });
+      console.warn('[TACNAV][IGN-WMS-V26] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
@@ -539,10 +542,13 @@ function initMap() {
 
   // El triángulo de GPS no depende de las capas del plano: es HTML flotante encima del mapa.
   // Se recalcula en cualquier movimiento/zoom para que no desaparezca ni se quede desplazado.
-  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', () => { updateGpsFloat(); bringTacticalMarkersToFront(); });
+  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', () => { updateGpsFloat(); bringTacticalMarkersToFront(); updateTacticalHtmlMarkers(); });
 
   switchMapLayer(activeMapKey);
+  ensureTacticalHtmlLayer();
+  installDirectWaypointPlacement();
   drawMarkers();
+  updateTacticalHtmlMarkers();
 }
 
 
@@ -619,6 +625,115 @@ function markerPopupHtml(m) {
   </div>`;
 }
 
+
+function ensureTacticalHtmlLayer() {
+  if (state.htmlMarkerLayer) return state.htmlMarkerLayer;
+  const mapEl = document.getElementById('map');
+  if (!mapEl) return null;
+  let layer = document.getElementById('tacticalMarkerLayer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'tacticalMarkerLayer';
+    layer.className = 'tactical-marker-layer';
+    layer.setAttribute('aria-label', 'Puntos tácticos');
+    mapEl.appendChild(layer);
+  }
+  state.htmlMarkerLayer = layer;
+  return layer;
+}
+
+function tacticalHtmlForMarker(m) {
+  const wp = waypointFor(m.type);
+  const symbol = escapeHtml(m.symbol || wp.symbol || '•');
+  return `<div class="tactical-marker-html-hit" data-marker-id="${escapeHtml(m.id)}" title="${escapeHtml(m.name || wp.label)}">
+    <div class="tactical-marker ${wp.cls}"><span>${symbol}</span></div>
+  </div>`;
+}
+
+function renderTacticalHtmlMarkers() {
+  const layer = ensureTacticalHtmlLayer();
+  if (!layer || !map) return;
+  const ids = new Set(state.markers.map(m => String(m.id)));
+
+  // Borrar los que ya no existen.
+  state.htmlMarkerEls.forEach((el, id) => {
+    if (!ids.has(String(id))) {
+      try { el.remove(); } catch (_) {}
+      state.htmlMarkerEls.delete(id);
+    }
+  });
+
+  // Crear/actualizar los que existen.
+  state.markers.forEach(m => {
+    if (!m?.id || !Number.isFinite(Number(m.lat)) || !Number.isFinite(Number(m.lng))) return;
+    let el = state.htmlMarkerEls.get(m.id);
+    if (!el) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = tacticalHtmlForMarker(m).trim();
+      el = tmp.firstElementChild;
+      if (!el) return;
+      el.addEventListener('click', ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const leafletMarker = state.markerLayers?.get(m.id);
+        if (leafletMarker?.openPopup) {
+          try { leafletMarker.openPopup(); } catch (_) {}
+        }
+      });
+      layer.appendChild(el);
+      state.htmlMarkerEls.set(m.id, el);
+    } else {
+      el.outerHTML = tacticalHtmlForMarker(m).trim();
+      const replacement = layer.querySelector(`[data-marker-id="${CSS.escape(String(m.id))}"]`);
+      if (replacement) {
+        replacement.addEventListener('click', ev => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const leafletMarker = state.markerLayers?.get(m.id);
+          if (leafletMarker?.openPopup) {
+            try { leafletMarker.openPopup(); } catch (_) {}
+          }
+        });
+        state.htmlMarkerEls.set(m.id, replacement);
+      }
+    }
+  });
+  updateTacticalHtmlMarkers();
+}
+
+function updateTacticalHtmlMarkers() {
+  if (!map || !state.htmlMarkerLayer) return;
+  state.markers.forEach(m => {
+    const el = state.htmlMarkerEls?.get(m.id);
+    if (!el || !Number.isFinite(Number(m.lat)) || !Number.isFinite(Number(m.lng))) return;
+    const point = map.latLngToContainerPoint([Number(m.lat), Number(m.lng)]);
+    el.style.transform = `translate3d(${Math.round(point.x)}px, ${Math.round(point.y)}px, 0) translate(-50%, -50%)`;
+    el.style.display = map.getBounds().pad(0.15).contains([Number(m.lat), Number(m.lng)]) ? 'block' : 'none';
+  });
+}
+
+function installDirectWaypointPlacement() {
+  if (!map || state.waypointPlacementInstalled) return;
+  const container = map.getContainer?.();
+  if (!container) return;
+  state.waypointPlacementInstalled = true;
+
+  const placeFromEvent = ev => {
+    if (!state.pendingMarker) return;
+    if (ev.target?.closest?.('.map-toolbar,.position-card,.leaflet-control,.leaflet-popup,.tactical-marker-html-hit,.gps-float-marker')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    const latlng = map.mouseEventToLatLng(ev);
+    placePendingMarker(latlng);
+  };
+
+  // Captura directa sobre el contenedor. Esto evita que una imagen WMS, una pane o un overlay
+  // impidan que el toque llegue al sistema de creación del punto.
+  container.addEventListener('pointerup', placeFromEvent, true);
+  container.addEventListener('click', placeFromEvent, true);
+}
+
 function bringTacticalMarkersToFront() {
   if (!map) return;
   const pane = map.getPane('tacticalPane') || map.getPane('markerPane');
@@ -651,6 +766,7 @@ function addMarkerToMap(m, open = false) {
 
   state.markerLayers.set(m.id, marker);
   bringTacticalMarkersToFront();
+  renderTacticalHtmlMarkers();
   if (open) {
     setTimeout(() => {
       bringTacticalMarkersToFront();
@@ -667,6 +783,7 @@ function drawMarkers() {
   state.markerLayers = new Map();
   state.markers.forEach(m => addMarkerToMap(m));
   bringTacticalMarkersToFront();
+  renderTacticalHtmlMarkers();
 }
 
 function updatePosition(pos, center = true) {
@@ -898,24 +1015,33 @@ $('#markerForm').addEventListener('submit', e => {
   setMapStatus(`Punto seleccionado: ${wp.label}. Pulsa en el plano para colocarlo.`);
 });
 
-function handleMapClick(e) {
-  if (!state.pendingMarker) return;
+function placePendingMarker(latlng) {
+  if (!state.pendingMarker || !latlng) return;
+  const lat = Number(latlng.lat);
+  const lng = Number(latlng.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
   const m = {
     id: crypto.randomUUID(),
     ...state.pendingMarker,
-    lat: e.latlng.lat,
-    lng: e.latlng.lng,
+    lat,
+    lng,
     createdAt: new Date().toISOString()
   };
   state.markers.push(m);
   persist('c2-markers', state.markers);
+
   const layer = addMarkerToMap(m, true);
+  renderTacticalHtmlMarkers();
+  updateTacticalHtmlMarkers();
   bringTacticalMarkersToFront();
-  // Pequeño refresco del mapa para que el icono aparezca inmediatamente encima del plano WMS.
   requestAnimationFrame(() => {
     try { layer?.setZIndexOffset(1000000); } catch (_) {}
+    renderTacticalHtmlMarkers();
+    updateTacticalHtmlMarkers();
     bringTacticalMarkersToFront();
   });
+
   state.pendingMarker = null;
   document.body.classList.remove('placing-marker');
   $('#markerForm').reset();
@@ -923,7 +1049,12 @@ function handleMapClick(e) {
   setMapStatus('Punto colocado');
 }
 
-function deleteMarker(id) {
+function handleMapClick(e) {
+  if (!state.pendingMarker) return;
+  placePendingMarker(e.latlng);
+}
+
+function deleteMarkerfunction deleteMarker(id) {
   if (!id) return;
   if (!confirm('¿Eliminar este punto?')) return;
   state.markers = state.markers.filter(m => m.id !== id);
@@ -934,6 +1065,7 @@ function deleteMarker(id) {
     state.markerLayers.delete(id);
   }
   drawMarkers();
+  renderTacticalHtmlMarkers();
   setMapStatus('Punto eliminado');
 }
 
@@ -1201,7 +1333,7 @@ function initPwaInstallPrompt() {
 }
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=tacnav-waypoints-v25').catch(console.error));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=tacnav-waypoints-v26').catch(console.error));
 }
 
 initPwaInstallPrompt();
