@@ -1,4 +1,4 @@
-const CACHE = 'tacnav-waypoints-v24';
+const CACHE = 'tacnav-waypoints-v25';
 const LOCAL = [
   './',
   './index.html',
@@ -28,7 +28,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
   // Los planos IGN y las librerías CDN se cargan siempre online, sin caché del Service Worker.
-  // V24: catálogo de waypoints tácticos y puntos mejorados.
+  // V25: catálogo de waypoints tácticos y puntos mejorados.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
