@@ -9,13 +9,13 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Prototipo PWA de mando y control para una sección: mapa, mensajería y documentos.">
   <title>SECCIÓN C2</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=landscape-v21">
+  <link rel="manifest" href="./manifest.webmanifest?v=pwa-install-v22">
   <link rel="icon" href="./assets/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./assets/icons/icon-192.svg">
   <link rel="preconnect" href="https://www.ign.es" crossorigin>
   <link rel="dns-prefetch" href="//www.ign.es">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynht6kPZQTVkZOempYfAs5B4zOqc=" crossorigin="">
-  <link rel="stylesheet" href="./assets/css/styles.css?v=landscape-v21">
+  <link rel="stylesheet" href="./assets/css/styles.css?v=pwa-install-v22">
 </head>
 <body>
   <header class="topbar">
@@ -23,7 +23,10 @@
       <div class="brand-mark">C2</div>
       <div><strong>SECCIÓN C2</strong><span id="unitLabel">Puesto de mando</span></div>
     </div>
-    <div class="status"><span id="onlineDot" class="dot"></span><span id="onlineText">Comprobando red</span></div>
+    <div class="topbar-actions">
+      <button id="installAppBtn" class="install-app-btn hidden" type="button">Instalar app</button>
+      <div class="status"><span id="onlineDot" class="dot"></span><span id="onlineText">Comprobando red</span></div>
+    </div>
   </header>
 
   <main>
@@ -95,7 +98,20 @@
     </form>
   </dialog>
 
+  <dialog id="installDialog" class="install-dialog">
+    <form method="dialog">
+      <h2>Instalar SECCIÓN C2</h2>
+      <p>Para aprovechar toda la pantalla y bloquear mejor el modo horizontal, instala esta web como aplicación.</p>
+      <ol>
+        <li><strong>Android / Chrome:</strong> pulsa el menú ⋮ y elige <strong>Instalar app</strong> o <strong>Añadir a pantalla de inicio</strong>.</li>
+        <li><strong>iPhone / Safari:</strong> pulsa compartir y después <strong>Añadir a pantalla de inicio</strong>.</li>
+      </ol>
+      <p class="install-note">Una vez instalada, ábrela desde el icono del móvil para verla a pantalla completa.</p>
+      <div class="dialog-actions"><button class="action primary" value="ok">Entendido</button></div>
+    </form>
+  </dialog>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="./assets/js/app.js?v=landscape-v21"></script>
+  <script type="module" src="./assets/js/app.js?v=pwa-install-v22"></script>
 </body>
 </html>
