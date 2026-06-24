@@ -1,4 +1,4 @@
-const CACHE = 'tacnav-map-balanced-v29';
+const CACHE = 'tacnav-v30-restaurado-buffer';
 const LOCAL = [
   './',
   './index.html',
@@ -31,7 +31,7 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // V29: base estable V27 con ajuste ligero de rendimiento; no cachea planos IGN ni librerías externas.
+  // V30: base V27 restaurada. No cachea planos IGN ni librerías externas.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
