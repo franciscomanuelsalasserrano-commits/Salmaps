@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://www.ign.es" crossorigin>
   <link rel="dns-prefetch" href="//www.ign.es">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynht6kPZQTVkZOempYfAs5B4zOqc=" crossorigin="">
-  <link rel="stylesheet" href="./assets/css/styles.css?v=tacnav-v23">
+  <link rel="stylesheet" href="./assets/css/styles.css?v=tacnav-waypoints-v24">
 </head>
 <body>
   <header class="topbar">
@@ -88,13 +88,23 @@
     <button class="nav-btn" data-view="settings"><span>⚙</span>Ajustes</button>
   </nav>
 
-  <dialog id="markerDialog">
+  <dialog id="markerDialog" class="waypoint-dialog">
     <form id="markerForm" method="dialog">
-      <h2>Nuevo punto</h2>
-      <label>Nombre<input id="markerName" maxlength="50" required placeholder="Ej. Punto de reunión"></label>
-      <label>Tipo<select id="markerType"><option value="friendly">Propio</option><option value="objective">Objetivo</option><option value="warning">Alerta</option><option value="medical">Sanidad</option></select></label>
-      <p id="markerHint">Pulsa después sobre el mapa para situarlo.</p>
-      <div class="dialog-actions"><button value="cancel" class="action">Cancelar</button><button id="confirmMarker" value="default" class="action primary">Continuar</button></div>
+      <h2>Añadir punto táctico</h2>
+      <div class="waypoint-grid">
+        <label>Carpeta
+          <select id="markerCategory"></select>
+        </label>
+        <label>Waypoint
+          <select id="markerWaypoint"></select>
+        </label>
+      </div>
+      <label>Nombre / observación
+        <input id="markerName" maxlength="60" placeholder="Se autocompleta si lo dejas vacío">
+      </label>
+      <div id="waypointPreview" class="waypoint-preview" aria-live="polite"></div>
+      <p id="markerHint">Elige el waypoint, pulsa <strong>Colocar</strong> y toca el plano donde quieras ponerlo.</p>
+      <div class="dialog-actions"><button value="cancel" class="action">Cancelar</button><button id="confirmMarker" value="default" class="action primary">Colocar</button></div>
     </form>
   </dialog>
 
@@ -112,6 +122,6 @@
   </dialog>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="./assets/js/app.js?v=tacnav-v23"></script>
+  <script type="module" src="./assets/js/app.js?v=tacnav-waypoints-v24"></script>
 </body>
 </html>
