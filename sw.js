@@ -1,4 +1,4 @@
-const CACHE = 'seccion-c2-pwa-install-v22';
+const CACHE = 'tacnav-v23';
 const LOCAL = [
   './',
   './index.html',
@@ -6,9 +6,9 @@ const LOCAL = [
   './assets/css/styles.css',
   './assets/js/app.js',
   './assets/js/db.js',
-  './assets/icons/icon.svg',
-  './assets/icons/icon-192.svg',
-  './assets/icons/icon-512.svg'
+  './assets/icons/icon.png',
+  './assets/icons/icon-192.png',
+  './assets/icons/icon-512.png'
 ];
 
 self.addEventListener('install', event => {
@@ -28,7 +28,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
   // Los planos IGN y las librerías CDN se cargan siempre online, sin caché del Service Worker.
-  // V22: caché nuevo para instalación PWA y modo pantalla completa.
+  // V23: nombre TACNAV e icono militar nuevo.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
