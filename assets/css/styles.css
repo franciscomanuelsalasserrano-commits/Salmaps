@@ -6,7 +6,7 @@
 #map .leaflet-container,#map .leaflet-pane,#map .leaflet-map-pane{background:#d8ddcf!important}
 #map .leaflet-tile-pane{display:none!important}
 .leaflet-ign-pane{z-index:220!important;pointer-events:none!important}
-.leaflet-image-layer.ign-wms-overlay{z-index:221!important;image-rendering:auto!important;transition:opacity .06s linear!important;will-change:transform,opacity!important;backface-visibility:hidden!important;pointer-events:none!important;max-width:none!important;max-height:none!important;background:#d8ddcf!important}
+.leaflet-image-layer.ign-wms-overlay{z-index:221!important;image-rendering:auto!important;transition:opacity .035s linear!important;will-change:transform,opacity!important;backface-visibility:hidden!important;pointer-events:none!important;max-width:none!important;max-height:none!important;background:#d8ddcf!important}
 .leaflet-marker-pane{z-index:620!important}.leaflet-overlay-pane{z-index:560!important}.leaflet-popup-pane{z-index:700!important}
 .map-toolbar{z-index:850!important;align-items:center;pointer-events:auto;position:absolute!important;top:12px!important;left:12px!important;right:12px!important;display:flex!important;gap:8px!important;overflow:auto!important;-webkit-overflow-scrolling:touch;max-width:calc(100vw - 24px)}
 .map-select{border:1px solid var(--line);background:rgba(19,28,23,.98);color:var(--text);border-radius:9px;padding:10px 12px;white-space:nowrap;min-height:42px;font-weight:800;max-width:56vw}
@@ -160,3 +160,21 @@ body.placing-marker #map::after{content:"Toca el plano para colocar el punto";po
 .leaflet-tactical-pane{z-index:1850!important;pointer-events:auto!important}.leaflet-tactical-pane .leaflet-marker-icon{z-index:1850!important;display:block!important;opacity:1!important}
 #tacticalMarkerLayer.tactical-marker-layer{position:absolute!important;inset:0!important;z-index:2147482500!important;pointer-events:none!important;overflow:hidden!important;contain:layout style paint!important}.tactical-marker-html-hit{position:absolute!important;left:0;top:0;width:46px!important;height:46px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;display:grid;place-items:center;pointer-events:auto!important;touch-action:manipulation!important;cursor:pointer!important;will-change:transform!important;filter:drop-shadow(0 3px 7px rgba(0,0,0,.9))}.tactical-marker-html-hit .tactical-marker{width:36px!important;height:36px!important}.tactical-marker-icon{display:block!important;opacity:1!important;background:transparent!important;border:0!important}.tactical-marker{position:relative!important;z-index:1!important}
 @media (orientation:landscape) and (max-height:560px){body.placing-marker #map::after{bottom:48px;font-size:11px;padding:6px 10px}.tactical-marker-html-hit{width:42px!important;height:42px!important}.tactical-marker-html-hit .tactical-marker{width:32px!important;height:32px!important}}
+
+
+/* V28: optimización de fluidez del plano IGN/PNOA */
+#map,
+#map .leaflet-container,
+#map .leaflet-map-pane,
+#map .leaflet-pane,
+#map .leaflet-ign-pane{
+  transform:translateZ(0)!important;
+  backface-visibility:hidden!important;
+}
+#map .leaflet-map-pane{will-change:transform!important;}
+.leaflet-image-layer.ign-wms-overlay{
+  transform:translateZ(0)!important;
+  contain:paint!important;
+}
+.leaflet-image-layer.ign-wms-fast{opacity:1!important;}
+.leaflet-image-layer.ign-wms-detail{opacity:1!important;}
