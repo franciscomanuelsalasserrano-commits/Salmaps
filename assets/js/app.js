@@ -20,7 +20,7 @@ let ignRaster = null;
 let detailTimer = null;
 let mapRequestSeq = 0;
 
-const MAP_VERSION = 'ign-online-fluid-wms-v16';
+const MAP_VERSION = 'ign-online-fast-wms-v17';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -77,7 +77,7 @@ function mercatorBounds(bounds) {
   return [sw.x, sw.y, ne.x, ne.y].map(n => Number(n).toFixed(2)).join(',');
 }
 
-function buildWmsUrl(key, bounds, pixelSize) {
+function buildWmsUrl(key, bounds, pixelSize, quality = 'fast') {
   const cfg = IGN_LAYERS[key] || IGN_LAYERS.topo;
   const params = new URLSearchParams({
     SERVICE: 'WMS',
@@ -93,8 +93,10 @@ function buildWmsUrl(key, bounds, pixelSize) {
     TRANSPARENT: 'FALSE',
     BGCOLOR: cfg.bg,
     EXCEPTIONS: 'application/vnd.ogc.se_inimage',
-    // Cache bust real: cada zoom/movimiento pide una imagen nueva al IGN.
-    _v: `${MAP_VERSION}-${key}-z${map.getZoom().toFixed(2)}-${Date.now()}`
+    // Sin Date.now: permite caché del navegador si vuelves a una vista ya pedida.
+    _v: MAP_VERSION,
+    _q: quality,
+    _z: map.getZoom().toFixed(2)
   });
   return `${cfg.url}?${params.toString()}`;
 }
@@ -117,8 +119,9 @@ function createIgnSingleImageRenderer() {
   let activeBounds = null;
   let activeZoom = null;
   let activeKey = activeMapKey;
+  let activeQuality = 'none';
   let requestId = 0;
-  let scheduledReason = '';
+  let detailTimerLocal = null;
 
   function removeOverlay(overlay) {
     if (!overlay) return;
@@ -128,10 +131,12 @@ function createIgnSingleImageRenderer() {
   function clear(removeVisible = true) {
     requestId++;
     clearTimeout(detailTimer);
+    clearTimeout(detailTimerLocal);
     if (loadingOverlay) removeOverlay(loadingOverlay);
     loadingOverlay = null;
     activeBounds = null;
     activeZoom = null;
+    activeQuality = 'none';
     if (removeVisible && activeOverlay) {
       removeOverlay(activeOverlay);
       activeOverlay = null;
@@ -149,11 +154,19 @@ function createIgnSingleImageRenderer() {
     }
   }
 
-  function bufferedPixelBounds(bufferRatio = 0.72) {
+  function bufferFor(reason, quality) {
+    // Antes se pedía una imagen demasiado grande; tardaba mucho.
+    // Ahora primero se pide una imagen ligera y después una de detalle.
+    if (quality === 'detail') return reason === 'zoomend' ? 0.44 : 0.36;
+    return reason === 'zoomend' ? 0.30 : 0.24;
+  }
+
+  function bufferedPixelBounds(reason = 'view', quality = 'fast') {
     const pb = map.getPixelBounds();
     const size = map.getSize();
-    const padX = Math.round(size.x * bufferRatio);
-    const padY = Math.round(size.y * bufferRatio);
+    const ratio = bufferFor(reason, quality);
+    const padX = Math.round(size.x * ratio);
+    const padY = Math.round(size.y * ratio);
     return L.bounds(
       pb.min.subtract([padX, padY]),
       pb.max.add([padX, padY])
@@ -166,54 +179,73 @@ function createIgnSingleImageRenderer() {
     return L.latLngBounds(se, nw);
   }
 
-  function pixelSizeFromBounds(pb) {
+  function pixelSizeFromBounds(pb, quality = 'fast') {
     const cssWidth = Math.max(1, pb.max.x - pb.min.x);
     const cssHeight = Math.max(1, pb.max.y - pb.min.y);
-    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.75);
-    const maxSide = 4096;
-    const scale = Math.max(0.55, Math.min(dpr, maxSide / cssWidth, maxSide / cssHeight));
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.35);
+
+    // FAST: muy rápido para que al mover/zoom no espere tanto.
+    // DETAIL: mejora después si el usuario se queda quieto.
+    const targetScale = quality === 'detail' ? Math.min(dpr, 1.18) : 0.72;
+    const maxSide = quality === 'detail' ? 2304 : 1400;
+    const scale = Math.max(0.45, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
     return {
       cssWidth,
       cssHeight,
-      width: Math.max(320, Math.round(cssWidth * scale)),
-      height: Math.max(320, Math.round(cssHeight * scale))
+      width: Math.max(280, Math.round(cssWidth * scale)),
+      height: Math.max(280, Math.round(cssHeight * scale))
     };
   }
 
-  function currentViewIsCovered() {
+  function currentViewIsCovered(quality = 'fast') {
     if (!activeOverlay || !activeBounds || activeKey !== activeMapKey) return false;
     if (Math.abs((activeZoom ?? -99) - map.getZoom()) > 0.08) return false;
-    return activeBounds.contains(map.getBounds());
+    if (!activeBounds.contains(map.getBounds())) return false;
+    if (quality === 'detail' && activeQuality !== 'detail') return false;
+    return true;
   }
 
-  function render(force = false, reason = 'view') {
+  function scheduleDetail(reason = 'detail') {
+    clearTimeout(detailTimerLocal);
+    detailTimerLocal = setTimeout(() => {
+      if (!map || !navigator.onLine) return;
+      if (activeKey === activeMapKey && activeQuality !== 'detail') {
+        render(false, reason, 'detail');
+      }
+    }, 360);
+  }
+
+  function render(force = false, reason = 'view', quality = 'fast') {
     if (!map || !navigator.onLine) return;
     const size = map.getSize();
     if (size.x < 20 || size.y < 20) return;
-    if (!force && currentViewIsCovered()) {
+
+    if (!force && currentViewIsCovered(quality)) {
       setMapStatus(`${(IGN_LAYERS[activeMapKey] || IGN_LAYERS.topo).label} listo z${map.getZoom().toFixed(1)}`);
+      if (activeQuality !== 'detail') scheduleDetail('auto-detail');
       return;
     }
 
     const key = activeMapKey;
     const cfg = IGN_LAYERS[key] || IGN_LAYERS.topo;
-    const pb = bufferedPixelBounds(reason === 'zoomend' || force ? 0.82 : 0.72);
+    const pb = bufferedPixelBounds(reason, quality);
     const overlayBounds = boundsFromPixelBounds(pb);
-    const pixelSize = pixelSizeFromBounds(pb);
+    const pixelSize = pixelSizeFromBounds(pb, quality);
     const id = ++requestId;
-    const url = buildWmsUrl(key, overlayBounds, pixelSize);
+    const url = buildWmsUrl(key, overlayBounds, pixelSize, quality);
 
-    scheduledReason = reason;
     updateAttribution(key);
-    setMapStatus(`Actualizando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-OVERLAY]', { reason, key, zoom: map.getZoom(), overlayBounds, pixelSize, url });
+    setMapStatus(quality === 'detail'
+      ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
+      : `Cargando rápido ${cfg.label} z${map.getZoom().toFixed(1)}…`);
+    console.info('[SECCION C2][IGN-WMS-FAST]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
 
     if (loadingOverlay) removeOverlay(loadingOverlay);
 
     const nextOverlay = L.imageOverlay(url, overlayBounds, {
       pane: 'ignPane',
       opacity: 0,
-      className: 'ign-wms-overlay',
+      className: `ign-wms-overlay ign-wms-${quality}`,
       interactive: false,
       crossOrigin: false,
       alt: cfg.label
@@ -233,12 +265,14 @@ function createIgnSingleImageRenderer() {
       activeBounds = overlayBounds;
       activeZoom = map.getZoom();
       activeKey = key;
+      activeQuality = quality;
 
       if (old && old !== nextOverlay) {
         old.setOpacity(0);
-        setTimeout(() => removeOverlay(old), 220);
+        setTimeout(() => removeOverlay(old), quality === 'fast' ? 90 : 160);
       }
-      setMapStatus(`${cfg.label} listo z${map.getZoom().toFixed(1)}`);
+      setMapStatus(`${cfg.label} listo z${map.getZoom().toFixed(1)}${quality === 'fast' ? ' · rápido' : ''}`);
+      if (quality === 'fast') scheduleDetail('post-fast');
     });
 
     nextOverlay.once('error', () => {
@@ -248,20 +282,23 @@ function createIgnSingleImageRenderer() {
       }
       loadingOverlay = null;
       removeOverlay(nextOverlay);
-      console.warn('[SECCION C2][IGN-WMS-OVERLAY] Error cargando plano', url);
+      console.warn('[SECCION C2][IGN-WMS-FAST] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
-      setTimeout(() => {
-        if (id === requestId && key === activeMapKey) render(true, 'retry');
-      }, 900);
+      if (quality === 'fast') {
+        setTimeout(() => {
+          if (id === requestId && key === activeMapKey) render(true, 'retry', 'fast');
+        }, 550);
+      }
     });
 
     nextOverlay.addTo(map);
   }
 
-  function schedule(force = false, delay = 180, reason = 'schedule') {
+  function schedule(force = false, delay = 80, reason = 'schedule') {
     clearTimeout(detailTimer);
-    detailTimer = setTimeout(() => render(force, reason), delay);
+    clearTimeout(detailTimerLocal);
+    detailTimer = setTimeout(() => render(force, reason, 'fast'), delay);
   }
 
   function setLayer(key) {
@@ -270,10 +307,11 @@ function createIgnSingleImageRenderer() {
     clear(false);
     activeMapKey = key;
     activeKey = key;
+    activeQuality = 'none';
     localStorage.setItem('c2-map-layer', key);
     updateAttribution(key);
     setMapStatus(`Cargando ${IGN_LAYERS[key].label} online…`);
-    render(true, 'layer-change');
+    render(true, 'layer-change', 'fast');
   }
 
   return { render, schedule, setLayer, clear };
@@ -281,7 +319,7 @@ function createIgnSingleImageRenderer() {
 
 function refreshOnlineMap(force = false) {
   if (!ignRaster) return;
-  const delay = force ? 20 : 120;
+  const delay = force ? 20 : 70;
   ignRaster.schedule(force, delay, force ? 'force-refresh' : 'view-change');
 }
 
@@ -334,9 +372,9 @@ function initMap() {
   // Durante el movimiento no pedimos imágenes nuevas continuamente: el plano actual se desplaza.
   // Cuando el movimiento/zoom termina, se carga una imagen nueva si hace falta.
   map.on('zoomstart movestart', () => setMapStatus('Plano en memoria'));
-  map.on('moveend', () => ignRaster?.schedule(false, 140, 'moveend'));
-  map.on('zoomend', () => ignRaster?.schedule(true, 90, 'zoomend'));
-  map.on('resize viewreset', () => ignRaster?.schedule(true, 80, 'resize'));
+  map.on('moveend', () => ignRaster?.schedule(false, 70, 'moveend'));
+  map.on('zoomend', () => ignRaster?.schedule(true, 45, 'zoomend'));
+  map.on('resize viewreset', () => ignRaster?.schedule(true, 55, 'resize'));
 
   switchMapLayer(activeMapKey);
   drawMarkers();
