@@ -162,3 +162,11 @@ body.is-pwa-installed .install-app-btn{display:none!important}
 .leaflet-tactical-pane .leaflet-marker-icon.leaflet-zoom-animated{will-change:transform!important}
 body.placing-marker #map{cursor:crosshair!important}
 body.placing-marker .map-toolbar::after{content:"Toca el plano para colocar el punto";display:inline-flex;align-items:center;padding:0 10px;border:1px solid rgba(214,230,155,.55);border-radius:8px;background:rgba(13,19,15,.88);color:var(--accent2);font-size:12px;font-weight:800;white-space:nowrap}
+
+
+/* V26: capa HTML independiente para que los waypoints nunca queden debajo del plano WMS. */
+#map{position:relative!important;overflow:hidden!important}
+.tactical-marker-layer{position:absolute!important;inset:0!important;z-index:2147482500!important;pointer-events:none!important;overflow:hidden!important;contain:layout size style!important}
+.tactical-marker-html-hit{position:absolute!important;left:0!important;top:0!important;width:46px!important;height:46px!important;display:grid!important;place-items:center!important;pointer-events:auto!important;z-index:2147482500!important;will-change:transform!important;touch-action:none!important}
+.tactical-marker-html-hit .tactical-marker{display:grid!important;visibility:visible!important;opacity:1!important}
+body.placing-marker .tactical-marker-layer{pointer-events:none!important}
