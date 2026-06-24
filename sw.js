@@ -1,4 +1,4 @@
-const CACHE = 'tacnav-v30-restaurado-buffer';
+const CACHE = 'tacnav-waypoints-v27-rescate';
 const LOCAL = [
   './',
   './index.html',
@@ -31,7 +31,7 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // V30: base V27 restaurada. No cachea planos IGN ni librerías externas.
+  // V27: no cachea planos IGN ni librerías externas. Evita que un recurso externo rompa red/menús.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
