@@ -1,4 +1,4 @@
-const CACHE = 'tacnav-waypoints-v26';
+const CACHE = 'tacnav-waypoints-v27-rescate';
 const LOCAL = [
   './',
   './index.html',
@@ -12,7 +12,11 @@ const LOCAL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(LOCAL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then(cache => Promise.allSettled(LOCAL.map(url => cache.add(url))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', event => {
@@ -27,8 +31,7 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // Los planos IGN y las librerías CDN se cargan siempre online, sin caché del Service Worker.
-  // V26: waypoints tácticos en capa HTML superior y toque directo sobre el plano.
+  // V27: no cachea planos IGN ni librerías externas. Evita que un recurso externo rompa red/menús.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
@@ -38,10 +41,9 @@ self.addEventListener('fetch', event => {
     fetch(event.request)
       .then(response => {
         const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(event.request, copy));
+        caches.open(CACHE).then(cache => cache.put(event.request, copy)).catch(() => {});
         return response;
       })
       .catch(() => caches.match(event.request, { ignoreSearch: true }).then(cached => cached || caches.match('./index.html', { ignoreSearch: true })))
   );
 });
-
