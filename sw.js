@@ -1,4 +1,4 @@
-const CACHE = 'seccion-c2-gps-triangulo-v20-visible';
+const CACHE = 'seccion-c2-landscape-v21';
 const LOCAL = [
   './',
   './index.html',
@@ -28,6 +28,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
   // Los planos IGN y las librerías CDN se cargan siempre online, sin caché del Service Worker.
+  // V21: nuevo caché para forzar layout horizontal y manifest landscape.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
@@ -40,6 +41,6 @@ self.addEventListener('fetch', event => {
         caches.open(CACHE).then(cache => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request, { ignoreSearch: true }).then(cached => cached || caches.match('./index.html')))
+      .catch(() => caches.match(event.request, { ignoreSearch: true }).then(cached => cached || caches.match('./index.html', { ignoreSearch: true })))
   );
 });
