@@ -124,3 +124,16 @@ html,body{width:100%;min-height:100%;overflow:hidden;overscroll-behavior:none;to
 @supports (height: 100dvh){
   html,body,main{height:100dvh}
 }
+
+/* V22 PWA: botón de instalación y pantalla completa instalada */
+.hidden{display:none!important}
+.topbar-actions{display:flex;align-items:center;gap:8px;min-width:0}
+.install-app-btn{border:1px solid rgba(158,181,93,.75);background:linear-gradient(180deg,#c5db7b,#9eb55d);color:#10150f;border-radius:999px;padding:8px 12px;font-weight:900;font-size:12px;line-height:1;white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.28);cursor:pointer}
+.install-app-btn:disabled{opacity:.75;cursor:wait}
+.install-dialog p{color:var(--muted);line-height:1.45;margin:.25rem 0 .6rem}
+.install-dialog ol{margin:.3rem 0 .5rem;padding-left:1.25rem;color:var(--text);line-height:1.45}
+.install-dialog li{margin:.35rem 0}.install-note{color:var(--accent2)!important;font-weight:800}
+body.is-pwa-installed .topbar{padding-top:env(safe-area-inset-top)}
+body.is-pwa-installed .install-app-btn{display:none!important}
+@media(max-width:560px){.topbar-actions{gap:6px}.install-app-btn{font-size:11px;padding:7px 9px}.status{max-width:105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status #onlineText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+@media (orientation: landscape) and (max-height:560px){.topbar-actions{gap:5px}.install-app-btn{font-size:10px;padding:6px 8px}.status{max-width:92px}.install-dialog{max-width:min(92vw,520px)}}
