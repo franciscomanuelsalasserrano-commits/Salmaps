@@ -26,7 +26,7 @@ const GPS_TARGET_ACCURACY_METERS = 12;
 const GPS_BURST_TIMEOUT_MS = 9000;
 const GPS_MIN_ZOOM = 18;
 
-const MAP_VERSION = 'ign-online-speed-v20-gps-visible';
+const MAP_VERSION = 'ign-online-speed-v21-landscape';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -806,10 +806,77 @@ $('#importInput').addEventListener('change', async e => {
   }
 });
 
+
+// V21: orientación horizontal en móvil y reajuste real del plano.
+function isStandalonePwa() {
+  return window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator.standalone === true;
+}
+
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.matchMedia?.('(pointer: coarse)')?.matches;
+}
+
+function refreshLayoutAfterOrientation(reason = 'layout') {
+  document.body.classList.toggle('is-landscape', window.innerWidth > window.innerHeight);
+  document.body.classList.toggle('is-portrait', window.innerWidth <= window.innerHeight);
+  if (!map) return;
+  const steps = [0, 90, 220, 520];
+  steps.forEach(delay => setTimeout(() => {
+    try {
+      map.invalidateSize({ animate: false, pan: false });
+      updateGpsFloat();
+      if ($('#view-map')?.classList.contains('active')) refreshOnlineMap(delay === 520);
+    } catch (err) {
+      console.warn('[SECCION C2][LANDSCAPE] Reajuste fallido', reason, err);
+    }
+  }, delay));
+}
+
+async function tryLockLandscape(reason = 'auto') {
+  if (!isMobileDevice()) return false;
+  if (!screen.orientation?.lock) return false;
+  try {
+    // En Chrome/Android normalmente solo se permite sin error cuando la app está instalada como PWA
+    // o está en pantalla completa. Si el navegador no lo permite, el CSS igualmente adapta el mapa.
+    if (isStandalonePwa() || document.fullscreenElement) {
+      await screen.orientation.lock('landscape-primary');
+      document.body.classList.add('orientation-locked');
+      refreshLayoutAfterOrientation(`lock-${reason}`);
+      return true;
+    }
+  } catch (err) {
+    console.info('[SECCION C2][LANDSCAPE] Bloqueo horizontal no permitido por el navegador', reason, err?.message || err);
+  }
+  return false;
+}
+
+function initLandscapeMode() {
+  document.body.classList.add('landscape-ready');
+  refreshLayoutAfterOrientation('init');
+  tryLockLandscape('init');
+
+  const requestOnGesture = () => {
+    tryLockLandscape('gesture');
+    refreshLayoutAfterOrientation('gesture');
+  };
+  ['click', 'touchend', 'keydown'].forEach(type => {
+    window.addEventListener(type, requestOnGesture, { passive: true, once: true });
+  });
+
+  window.addEventListener('orientationchange', () => refreshLayoutAfterOrientation('orientationchange'));
+  window.addEventListener('resize', () => refreshLayoutAfterOrientation('resize'));
+  window.visualViewport?.addEventListener('resize', () => refreshLayoutAfterOrientation('visualViewport'));
+  document.addEventListener('fullscreenchange', () => tryLockLandscape('fullscreen'));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshLayoutAfterOrientation('visible');
+  });
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
 }
 
+initLandscapeMode();
 initMap();
 map.on('click', handleMapClick);
 initNav();
