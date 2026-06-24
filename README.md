@@ -1,19 +1,17 @@
-# Parche planos reset v1
+# Parche planos IGN online limpio
 
-Sustituir estos archivos en el proyecto:
+Este parche elimina la lógica anterior de planos y deja únicamente dos capas online oficiales del IGN:
 
-- index.html
-- sw.js
-- assets/js/app.js
-- assets/css/styles.css
+- IGN topográfico, desde el WMS `mapa-raster`, capa `mtn_rasterizado`.
+- IGN vista aérea, desde el WMS `pnoa-ma`, capa `OI.OrthoimageCoverage`.
 
-Sistema de mapas rehecho desde cero:
+La carga se hace como imagen WMS completa de la vista, no mediante teselas visibles. Al mover o hacer zoom, la aplicación mantiene la imagen anterior y pide una imagen nueva al IGN para la nueva escala.
 
-- Sin teselas visibles.
-- Sin OSM.
-- Sin Esri.
-- Solo IGN topográfico militar y PNOA aérea.
-- Imagen base completa de España siempre debajo.
-- Imagen de detalle por vista que se recarga al mover, ampliar y alejar.
-- Mantiene la imagen anterior mientras se carga la nueva para evitar negro/gris.
-- Un solo marcador GPS triangular.
+Archivos incluidos para sustituir:
+
+- `index.html`
+- `sw.js`
+- `assets/js/app.js`
+- `assets/css/styles.css`
+
+Después de subirlos a GitHub Pages, borra datos del sitio o prueba en incógnito para evitar que el navegador use un Service Worker anterior.
