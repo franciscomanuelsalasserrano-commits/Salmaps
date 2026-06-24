@@ -137,3 +137,18 @@ body.is-pwa-installed .topbar{padding-top:env(safe-area-inset-top)}
 body.is-pwa-installed .install-app-btn{display:none!important}
 @media(max-width:560px){.topbar-actions{gap:6px}.install-app-btn{font-size:11px;padding:7px 9px}.status{max-width:105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status #onlineText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 @media (orientation: landscape) and (max-height:560px){.topbar-actions{gap:5px}.install-app-btn{font-size:10px;padding:6px 8px}.status{max-width:92px}.install-dialog{max-width:min(92vw,520px)}}
+
+
+/* V24 TACNAV: selector de waypoints tácticos */
+.waypoint-dialog{width:min(94vw,560px)}
+.waypoint-grid{display:grid;grid-template-columns:1fr 1.25fr;gap:10px}
+.waypoint-preview{display:flex;align-items:center;gap:12px;border:1px solid rgba(158,181,93,.35);background:rgba(10,16,12,.72);border-radius:12px;padding:10px 12px;min-height:58px}
+.waypoint-preview strong,.waypoint-preview small{display:block}.waypoint-preview small{color:var(--muted);margin-top:2px}
+#markerHint{margin:0;color:var(--muted);font-size:12px;line-height:1.35}
+.tactical-marker-icon{background:transparent!important;border:0!important}
+.tactical-marker{width:34px;height:34px;border:2px solid rgba(255,255,255,.95);border-radius:7px;display:grid;place-items:center;box-shadow:0 2px 9px rgba(0,0,0,.82), inset 0 0 0 1px rgba(0,0,0,.22);transform:rotate(45deg);font-weight:950;font-size:9px;letter-spacing:-.03em;color:#fff;text-shadow:0 1px 2px #000;line-height:1}
+.tactical-marker span{display:block;transform:rotate(-45deg);max-width:30px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wp-nav{background:#3c8f50}.wp-c2{background:#b48b27}.wp-friendly{background:#2376cf}.wp-air{background:#6c56d9}.wp-log{background:#c48d1e}.wp-med{background:#d8e8f7;color:#c21f32;border-color:#c21f32}.wp-risk{background:#c64032}.wp-info{background:#217d91}.wp-obj{background:#9e2f2f}.wp-unknown{background:#5f6670}
+.marker-popup{display:grid;gap:3px;min-width:150px}.marker-popup strong{font-size:13px}.marker-popup small{display:block;color:#425047}.marker-popup button{margin-top:6px;border:1px solid #a44;background:#6b2222;color:#fff;border-radius:6px;padding:5px 7px;cursor:pointer}
+@media(max-width:560px){.waypoint-grid{grid-template-columns:1fr}.waypoint-dialog{width:96vw}.tactical-marker{width:32px;height:32px;font-size:8px}}
+@media (orientation: landscape) and (max-height:560px){.waypoint-dialog{width:min(92vw,620px)}.waypoint-grid{grid-template-columns:1fr 1.35fr}.waypoint-dialog form{gap:8px}.waypoint-preview{padding:7px 9px;min-height:48px}.tactical-marker{width:30px;height:30px;font-size:8px}}
