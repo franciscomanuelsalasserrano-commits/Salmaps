@@ -1,4 +1,4 @@
-const CACHE = 'seccion-c2-ign-online-clean-v1';
+const CACHE = 'seccion-c2-ign-online-senior-wms-v15';
 const LOCAL = [
   './',
   './index.html',
