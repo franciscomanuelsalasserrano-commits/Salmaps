@@ -90,3 +90,37 @@
 }
 /* Evita doble triángulo: el marcador Leaflet queda como respaldo lógico, el visible real es #gpsFloatMarker. */
 .leaflet-gps-pane .gps-triangle-icon.leaflet-marker-icon{display:none!important}
+
+/* V21: modo móvil horizontal tipo visor táctico */
+html,body{width:100%;min-height:100%;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
+#view-map{overflow:hidden!important}
+#map{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-height:100%!important;background:#101713!important}
+.leaflet-container{background:#101713!important}
+
+@media (orientation: landscape) and (max-height: 560px){
+  :root{--top:42px;--bottom:0px}
+  .topbar{height:var(--top);padding-top:0;padding-left:max(10px,env(safe-area-inset-left));padding-right:max(10px,env(safe-area-inset-right))}
+  .brand{gap:7px}.brand-mark{width:30px;height:30px}.brand strong{font-size:12px}.brand span{font-size:10px}.status{font-size:10px}
+  .bottom-nav{height:calc(100dvh - var(--top));width:70px;padding-bottom:0;inset:var(--top) auto 0 0;grid-template-columns:1fr;grid-template-rows:repeat(4,1fr);border-top:0;border-right:1px solid var(--line)}
+  .nav-btn{font-size:9px;gap:1px;padding:2px}.nav-btn span{font-size:18px}
+  .view{inset:var(--top) 0 0 70px!important;overflow:hidden}
+  .panel-view{max-width:none;margin:0;padding:12px 14px;overflow:auto!important}
+  .map-toolbar{top:7px;left:7px;right:7px;z-index:900;display:flex;gap:5px;align-items:center;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding-bottom:2px;max-width:calc(100dvw - 92px)}
+  .map-toolbar::-webkit-scrollbar{display:none}
+  .map-select,.action,.upload,.send,.ghost{font-size:11px;padding:7px 8px;border-radius:7px;min-height:32px}
+  #mapLayerSelect{max-width:152px}
+  .position-card{left:7px;right:auto;bottom:7px;z-index:900;padding:7px 9px;border-radius:8px;font-size:10px;max-width:260px;grid-template-columns:1fr;gap:1px;background:rgba(13,19,15,.82)}
+  .leaflet-control-zoom{transform:scale(.86);transform-origin:bottom right}
+  .leaflet-bottom.leaflet-right{right:max(8px,env(safe-area-inset-right));bottom:8px}
+  .leaflet-bottom.leaflet-left{left:8px;bottom:88px}
+  .composer{left:84px;right:12px;bottom:10px}
+  dialog{max-height:calc(100dvh - 24px);overflow:auto}
+}
+
+@media (orientation: portrait) and (max-width: 899px){
+  body.landscape-ready #view-map::after{content:"Para modo horizontal automático, instala la app o gira el móvil";position:absolute;right:10px;bottom:calc(var(--bottom) + 86px);z-index:850;max-width:220px;padding:8px 10px;border:1px solid rgba(158,181,93,.35);border-radius:9px;background:rgba(13,19,15,.72);color:var(--muted);font-size:11px;line-height:1.25;pointer-events:none;opacity:.86}
+}
+
+@supports (height: 100dvh){
+  html,body,main{height:100dvh}
+}
