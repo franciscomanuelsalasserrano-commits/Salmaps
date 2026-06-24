@@ -9,6 +9,8 @@ const state = {
   pendingMarker: null,
   watchId: null,
   userMarker: null,
+  gpsFloat: null,
+  lastGpsLatLng: null,
   accuracyCircle: null,
   heading: 0
 };
@@ -24,7 +26,7 @@ const GPS_TARGET_ACCURACY_METERS = 12;
 const GPS_BURST_TIMEOUT_MS = 9000;
 const GPS_MIN_ZOOM = 18;
 
-const MAP_VERSION = 'ign-online-speed-v19-gps';
+const MAP_VERSION = 'ign-online-speed-v20-gps-visible';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -290,7 +292,7 @@ function createIgnSingleImageRenderer() {
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
       : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-SPEED-V18]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
+    console.info('[SECCION C2][IGN-WMS-SPEED-V20]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
 
     // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
     // Esto evita que descargas viejas bloqueen la nueva capa.
@@ -316,7 +318,7 @@ function createIgnSingleImageRenderer() {
       if (img !== loadingImage || id !== requestId) return;
       loadingImage = null;
       loadingUrl = '';
-      console.warn('[SECCION C2][IGN-WMS-SPEED-V18] Error cargando plano', { quality, url });
+      console.warn('[SECCION C2][IGN-WMS-SPEED-V20] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
@@ -414,8 +416,53 @@ function initMap() {
   map.on('zoomend', () => ignRaster?.schedule(true, 15, 'zoomend'));
   map.on('resize viewreset', () => ignRaster?.schedule(true, 25, 'resize'));
 
+  // El triángulo de GPS no depende de las capas del plano: es HTML flotante encima del mapa.
+  // Se recalcula en cualquier movimiento/zoom para que no desaparezca ni se quede desplazado.
+  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', updateGpsFloat);
+
   switchMapLayer(activeMapKey);
   drawMarkers();
+}
+
+
+function ensureGpsFloat() {
+  if (state.gpsFloat) return state.gpsFloat;
+  const mapEl = document.getElementById('map');
+  if (!mapEl) return null;
+
+  const el = document.createElement('div');
+  el.id = 'gpsFloatMarker';
+  el.className = 'gps-float-marker';
+  el.setAttribute('aria-label', 'Mi posición');
+  el.innerHTML = '<div class="gps-float-triangle"><span></span></div>';
+  mapEl.appendChild(el);
+  state.gpsFloat = el;
+  return el;
+}
+
+function updateGpsFloat() {
+  if (!map || !state.lastGpsLatLng) return;
+  const el = ensureGpsFloat();
+  if (!el) return;
+  const p = map.latLngToContainerPoint(state.lastGpsLatLng);
+  const heading = Number.isFinite(state.heading) ? state.heading : 0;
+  el.style.left = `${Math.round(p.x)}px`;
+  el.style.top = `${Math.round(p.y)}px`;
+  el.style.setProperty('--heading', `${heading}deg`);
+  el.classList.add('visible');
+}
+
+function showGpsFloat(latlng) {
+  state.lastGpsLatLng = L.latLng(latlng);
+  ensureGpsFloat();
+  updateGpsFloat();
+  requestAnimationFrame(updateGpsFloat);
+  setTimeout(updateGpsFloat, 80);
+  setTimeout(updateGpsFloat, 260);
+}
+
+function hideGpsFloat() {
+  if (state.gpsFloat) state.gpsFloat.classList.remove('visible');
 }
 
 function gpsDivIcon(heading = 0) {
@@ -446,44 +493,57 @@ function drawMarkers() {
 
 function updatePosition(pos, center = true) {
   const { latitude: lat, longitude: lng, accuracy, heading } = pos.coords;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
   if (Number.isFinite(heading)) state.heading = heading;
-  $('#coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-  $('#accuracy').textContent = `Precisión: ±${Math.round(accuracy)} m`;
 
-  const ll = [lat, lng];
+  const acc = Number.isFinite(accuracy) ? Math.round(accuracy) : 0;
+  $('#coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  $('#accuracy').textContent = acc ? `Precisión: ±${acc} m` : 'Precisión: —';
+
+  const ll = L.latLng(lat, lng);
+
+  // Marcador principal: HTML flotante. Este es el que debe verse siempre encima de todas las capas.
+  showGpsFloat(ll);
+
+  // Marcador Leaflet de respaldo por si el navegador no pinta correctamente el HTML flotante.
   if (state.userMarker) {
     state.userMarker.setLatLng(ll);
     state.userMarker.setIcon(gpsDivIcon(state.heading));
-    state.userMarker.setZIndexOffset(100000);
+    state.userMarker.setZIndexOffset(1000000);
   } else {
     state.userMarker = L.marker(ll, {
       icon: gpsDivIcon(state.heading),
       pane: 'gpsPane',
-      zIndexOffset: 100000,
-      interactive: false
+      zIndexOffset: 1000000,
+      interactive: false,
+      keyboard: false
     }).addTo(map).bindPopup('Mi posición');
   }
 
   if (state.accuracyCircle) {
-    state.accuracyCircle.setLatLng(ll).setRadius(accuracy);
+    state.accuracyCircle.setLatLng(ll).setRadius(acc || 1);
   } else {
     state.accuracyCircle = L.circle(ll, {
       pane: 'accuracyPane',
-      radius: accuracy,
+      radius: acc || 1,
       color: '#1e88ff',
       weight: 1,
       fillColor: '#1e88ff',
-      fillOpacity: 0.07,
+      fillOpacity: 0.06,
       interactive: false
     }).addTo(map);
   }
 
   if (state.accuracyCircle?.bringToBack) state.accuracyCircle.bringToBack();
   if (state.userMarker?.bringToFront) state.userMarker.bringToFront();
+  updateGpsFloat();
 
   if (center) {
     map.setView(ll, Math.max(map.getZoom(), GPS_MIN_ZOOM), { animate: true });
-    setTimeout(() => refreshOnlineMap(true), 450);
+    setTimeout(() => {
+      updateGpsFloat();
+      refreshOnlineMap(true);
+    }, 250);
   }
 }
 
@@ -571,6 +631,26 @@ function locateWithBestAccuracy() {
 }
 
 $('#locateBtn').addEventListener('click', locateWithBestAccuracy);
+
+// Orientación opcional del teléfono: si el navegador la permite, gira el triángulo azul.
+function handleDeviceHeading(e) {
+  const heading = Number.isFinite(e.webkitCompassHeading) ? e.webkitCompassHeading : (Number.isFinite(e.alpha) ? 360 - e.alpha : null);
+  if (heading === null) return;
+  state.heading = heading;
+  if (state.userMarker) state.userMarker.setIcon(gpsDivIcon(state.heading));
+  updateGpsFloat();
+}
+try {
+  if (window.DeviceOrientationEvent?.requestPermission) {
+    $('#locateBtn')?.addEventListener('click', () => {
+      window.DeviceOrientationEvent.requestPermission().then(res => {
+        if (res === 'granted') window.addEventListener('deviceorientation', handleDeviceHeading, true);
+      }).catch(() => {});
+    }, { once: true });
+  } else {
+    window.addEventListener('deviceorientation', handleDeviceHeading, true);
+  }
+} catch (_) {}
 
 $('#trackBtn').addEventListener('click', () => {
   if (state.watchId !== null) {
