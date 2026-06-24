@@ -20,7 +20,7 @@ let ignRaster = null;
 let detailTimer = null;
 let mapRequestSeq = 0;
 
-const MAP_VERSION = 'ign-online-senior-wms-v15';
+const MAP_VERSION = 'ign-online-fluid-wms-v16';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -111,93 +111,167 @@ function viewPixelSize() {
 }
 
 function createIgnSingleImageRenderer() {
-  const mapEl = map.getContainer();
-  let stage = mapEl.querySelector('.ign-single-wms-stage');
-  if (!stage) {
-    stage = document.createElement('div');
-    stage.className = 'ign-single-wms-stage';
-    mapEl.appendChild(stage);
+  const cfgAttributions = new Set();
+  let activeOverlay = null;
+  let loadingOverlay = null;
+  let activeBounds = null;
+  let activeZoom = null;
+  let activeKey = activeMapKey;
+  let requestId = 0;
+  let scheduledReason = '';
+
+  function removeOverlay(overlay) {
+    if (!overlay) return;
+    try { map.removeLayer(overlay); } catch (_) {}
   }
 
-  let activeImg = null;
-  let lastGoodImg = null;
-  let requestId = 0;
-
-  function clear() {
+  function clear(removeVisible = true) {
     requestId++;
-    stage.querySelectorAll('img').forEach(img => img.remove());
-    activeImg = null;
-    lastGoodImg = null;
+    clearTimeout(detailTimer);
+    if (loadingOverlay) removeOverlay(loadingOverlay);
+    loadingOverlay = null;
+    activeBounds = null;
+    activeZoom = null;
+    if (removeVisible && activeOverlay) {
+      removeOverlay(activeOverlay);
+      activeOverlay = null;
+    }
+  }
+
+  function updateAttribution(key) {
+    if (!map?.attributionControl) return;
+    cfgAttributions.forEach(attr => map.attributionControl.removeAttribution(attr));
+    cfgAttributions.clear();
+    const attr = (IGN_LAYERS[key] || IGN_LAYERS.topo).attribution;
+    if (attr) {
+      cfgAttributions.add(attr);
+      map.attributionControl.addAttribution(attr);
+    }
+  }
+
+  function bufferedPixelBounds(bufferRatio = 0.72) {
+    const pb = map.getPixelBounds();
+    const size = map.getSize();
+    const padX = Math.round(size.x * bufferRatio);
+    const padY = Math.round(size.y * bufferRatio);
+    return L.bounds(
+      pb.min.subtract([padX, padY]),
+      pb.max.add([padX, padY])
+    );
+  }
+
+  function boundsFromPixelBounds(pb) {
+    const nw = map.unproject(pb.min, map.getZoom());
+    const se = map.unproject(pb.max, map.getZoom());
+    return L.latLngBounds(se, nw);
+  }
+
+  function pixelSizeFromBounds(pb) {
+    const cssWidth = Math.max(1, pb.max.x - pb.min.x);
+    const cssHeight = Math.max(1, pb.max.y - pb.min.y);
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.75);
+    const maxSide = 4096;
+    const scale = Math.max(0.55, Math.min(dpr, maxSide / cssWidth, maxSide / cssHeight));
+    return {
+      cssWidth,
+      cssHeight,
+      width: Math.max(320, Math.round(cssWidth * scale)),
+      height: Math.max(320, Math.round(cssHeight * scale))
+    };
+  }
+
+  function currentViewIsCovered() {
+    if (!activeOverlay || !activeBounds || activeKey !== activeMapKey) return false;
+    if (Math.abs((activeZoom ?? -99) - map.getZoom()) > 0.08) return false;
+    return activeBounds.contains(map.getBounds());
   }
 
   function render(force = false, reason = 'view') {
     if (!map || !navigator.onLine) return;
-    const size = viewPixelSize();
-    if (size.cssWidth < 20 || size.cssHeight < 20) return;
+    const size = map.getSize();
+    if (size.x < 20 || size.y < 20) return;
+    if (!force && currentViewIsCovered()) {
+      setMapStatus(`${(IGN_LAYERS[activeMapKey] || IGN_LAYERS.topo).label} listo z${map.getZoom().toFixed(1)}`);
+      return;
+    }
 
     const key = activeMapKey;
     const cfg = IGN_LAYERS[key] || IGN_LAYERS.topo;
-    const bounds = map.getBounds();
+    const pb = bufferedPixelBounds(reason === 'zoomend' || force ? 0.82 : 0.72);
+    const overlayBounds = boundsFromPixelBounds(pb);
+    const pixelSize = pixelSizeFromBounds(pb);
     const id = ++requestId;
-    const url = buildWmsUrl(key, bounds, size);
+    const url = buildWmsUrl(key, overlayBounds, pixelSize);
 
-    if (force) setMapStatus(`Actualizando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS]', { reason, key, zoom: map.getZoom(), bounds, size, url });
+    scheduledReason = reason;
+    updateAttribution(key);
+    setMapStatus(`Actualizando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
+    console.info('[SECCION C2][IGN-WMS-OVERLAY]', { reason, key, zoom: map.getZoom(), overlayBounds, pixelSize, url });
 
-    const img = new Image();
-    img.className = 'ign-single-wms-img is-loading';
-    img.alt = cfg.label;
-    img.draggable = false;
-    img.decoding = 'async';
-    img.dataset.key = key;
-    img.dataset.zoom = String(map.getZoom());
-    img.dataset.request = String(id);
+    if (loadingOverlay) removeOverlay(loadingOverlay);
 
-    img.onload = () => {
-      if (id !== requestId || key !== activeMapKey) return;
-      img.classList.remove('is-loading');
-      img.classList.add('is-ready');
-      stage.appendChild(img);
+    const nextOverlay = L.imageOverlay(url, overlayBounds, {
+      pane: 'ignPane',
+      opacity: 0,
+      className: 'ign-wms-overlay',
+      interactive: false,
+      crossOrigin: false,
+      alt: cfg.label
+    });
+    loadingOverlay = nextOverlay;
 
-      const old = activeImg;
-      activeImg = img;
-      lastGoodImg = img;
-
-      if (old && old !== img) {
-        old.classList.add('is-old');
-        setTimeout(() => old.remove(), 180);
+    nextOverlay.once('load', () => {
+      if (id !== requestId || key !== activeMapKey) {
+        removeOverlay(nextOverlay);
+        return;
       }
-      // Limpieza defensiva: si quedó cualquier imagen vieja, fuera.
-      [...stage.querySelectorAll('img')].forEach(node => {
-        if (node !== activeImg && node !== old) node.remove();
-      });
-      setMapStatus(`${cfg.label} actualizado z${map.getZoom().toFixed(1)}`);
-    };
+      loadingOverlay = null;
+      nextOverlay.setOpacity(1);
 
-    img.onerror = () => {
-      if (id !== requestId) return;
-      console.warn('[SECCION C2][IGN-WMS] Error cargando plano', url);
-      // Nunca dejamos gris/negro si ya había una imagen válida.
-      if (lastGoodImg) setMapStatus('Plano anterior mantenido; reintentando IGN…');
+      const old = activeOverlay;
+      activeOverlay = nextOverlay;
+      activeBounds = overlayBounds;
+      activeZoom = map.getZoom();
+      activeKey = key;
+
+      if (old && old !== nextOverlay) {
+        old.setOpacity(0);
+        setTimeout(() => removeOverlay(old), 220);
+      }
+      setMapStatus(`${cfg.label} listo z${map.getZoom().toFixed(1)}`);
+    });
+
+    nextOverlay.once('error', () => {
+      if (id !== requestId) {
+        removeOverlay(nextOverlay);
+        return;
+      }
+      loadingOverlay = null;
+      removeOverlay(nextOverlay);
+      console.warn('[SECCION C2][IGN-WMS-OVERLAY] Error cargando plano', url);
+      if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       setTimeout(() => {
         if (id === requestId && key === activeMapKey) render(true, 'retry');
-      }, 1200);
-    };
+      }, 900);
+    });
 
-    // Importante: se asigna src al final para que los handlers estén activos.
-    img.src = url;
+    nextOverlay.addTo(map);
   }
 
-  function schedule(force = false, delay = 120, reason = 'schedule') {
+  function schedule(force = false, delay = 180, reason = 'schedule') {
     clearTimeout(detailTimer);
     detailTimer = setTimeout(() => render(force, reason), delay);
   }
 
   function setLayer(key) {
-    clear();
+    if (!IGN_LAYERS[key]) key = 'topo';
+    // No borramos la imagen visible hasta que la nueva capa esté preparada.
+    clear(false);
     activeMapKey = key;
+    activeKey = key;
     localStorage.setItem('c2-map-layer', key);
+    updateAttribution(key);
     setMapStatus(`Cargando ${IGN_LAYERS[key].label} online…`);
     render(true, 'layer-change');
   }
@@ -235,12 +309,16 @@ function initMap() {
     zoomDelta: 0.5
   }).setView([40.4168, -3.7038], 6);
 
-  // Pane alto solo para GPS y puntos. El plano IGN va en una capa HTML fija propia,
-  // así nunca tapa los botones ni queda una capa base bloqueando otra.
+  // Pane propio para el plano IGN online. Va por debajo de puntos/GPS,
+  // pero se mueve y escala con Leaflet para que el movimiento sea más fluido.
+  map.createPane('ignPane');
+  map.getPane('ignPane').style.zIndex = 220;
+  map.getPane('ignPane').style.pointerEvents = 'none';
+
   map.createPane('gpsPane');
   map.getPane('gpsPane').style.zIndex = 650;
 
-  // Asegurar que marcadores/puntos quedan por encima del plano WMS HTML.
+  // Asegurar que marcadores/puntos quedan por encima del plano WMS.
   map.getPane('markerPane').style.zIndex = 620;
   map.getPane('overlayPane').style.zIndex = 560;
   map.getPane('popupPane').style.zIndex = 700;
@@ -253,9 +331,12 @@ function initMap() {
   $('#mapLayerSelect')?.addEventListener('change', e => switchMapLayer(e.target.value));
   $('#reloadMapBtn')?.addEventListener('click', () => refreshOnlineMap(true));
 
-  // La actualización real ocurre en zoomend/moveend. Mientras tanto se conserva la imagen previa.
-  map.on('zoomstart movestart', () => setMapStatus('Manteniendo plano anterior'));
-  map.on('zoomend moveend resize viewreset', () => refreshOnlineMap(true));
+  // Durante el movimiento no pedimos imágenes nuevas continuamente: el plano actual se desplaza.
+  // Cuando el movimiento/zoom termina, se carga una imagen nueva si hace falta.
+  map.on('zoomstart movestart', () => setMapStatus('Plano en memoria'));
+  map.on('moveend', () => ignRaster?.schedule(false, 140, 'moveend'));
+  map.on('zoomend', () => ignRaster?.schedule(true, 90, 'zoomend'));
+  map.on('resize viewreset', () => ignRaster?.schedule(true, 80, 'resize'));
 
   switchMapLayer(activeMapKey);
   drawMarkers();
