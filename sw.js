@@ -1,4 +1,4 @@
-const CACHE = 'seccion-c2-gps-triangulo-v19';
+const CACHE = 'seccion-c2-gps-triangulo-v20-visible';
 const LOCAL = [
   './',
   './index.html',
