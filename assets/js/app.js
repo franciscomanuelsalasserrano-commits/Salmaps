@@ -12,7 +12,8 @@ const state = {
   gpsFloat: null,
   lastGpsLatLng: null,
   accuracyCircle: null,
-  heading: 0
+  heading: 0,
+  markerLayers: new Map()
 };
 const persist = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 
@@ -510,10 +511,16 @@ function initMap() {
   map.getPane('gpsPane').style.zIndex = 2000;
   map.getPane('gpsPane').style.pointerEvents = 'none';
 
+  // V25: pane propio para waypoints tácticos.
+  // Los puntos no comparten pane con el plano, así nunca quedan escondidos bajo el WMS.
+  map.createPane('tacticalPane');
+  map.getPane('tacticalPane').style.zIndex = 1800;
+  map.getPane('tacticalPane').style.pointerEvents = 'auto';
+
   // Asegurar que marcadores/puntos quedan por encima del plano WMS.
-  map.getPane('markerPane').style.zIndex = 620;
+  map.getPane('markerPane').style.zIndex = 1200;
   map.getPane('overlayPane').style.zIndex = 560;
-  map.getPane('popupPane').style.zIndex = 700;
+  map.getPane('popupPane').style.zIndex = 2200;
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
   L.control.attribution({ prefix: false, position: 'bottomleft' }).addTo(map);
@@ -532,7 +539,7 @@ function initMap() {
 
   // El triángulo de GPS no depende de las capas del plano: es HTML flotante encima del mapa.
   // Se recalcula en cualquier movimiento/zoom para que no desaparezca ni se quede desplazado.
-  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', updateGpsFloat);
+  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', () => { updateGpsFloat(); bringTacticalMarkersToFront(); });
 
   switchMapLayer(activeMapKey);
   drawMarkers();
@@ -612,16 +619,54 @@ function markerPopupHtml(m) {
   </div>`;
 }
 
+function bringTacticalMarkersToFront() {
+  if (!map) return;
+  const pane = map.getPane('tacticalPane') || map.getPane('markerPane');
+  if (pane) pane.style.zIndex = '1800';
+  state.markerLayers?.forEach(layer => {
+    try { layer.setZIndexOffset(1000000); } catch (_) {}
+  });
+}
+
 function addMarkerToMap(m, open = false) {
-  const marker = L.marker([m.lat, m.lng], { icon: iconFor(m), keyboard: false })
+  if (!map || !Number.isFinite(Number(m.lat)) || !Number.isFinite(Number(m.lng))) return null;
+
+  // Si ya existía en pantalla, lo reemplazamos para evitar duplicados invisibles.
+  const old = state.markerLayers.get(m.id);
+  if (old) {
+    try { map.removeLayer(old); } catch (_) {}
+    state.markerLayers.delete(m.id);
+  }
+
+  const marker = L.marker([Number(m.lat), Number(m.lng)], {
+    icon: iconFor(m),
+    keyboard: false,
+    pane: map.getPane('tacticalPane') ? 'tacticalPane' : 'markerPane',
+    riseOnHover: true,
+    riseOffset: 1000000,
+    zIndexOffset: 1000000
+  })
     .addTo(map)
-    .bindPopup(markerPopupHtml(m));
-  if (open) marker.openPopup();
+    .bindPopup(markerPopupHtml(m), { pane: 'popupPane' });
+
+  state.markerLayers.set(m.id, marker);
+  bringTacticalMarkersToFront();
+  if (open) {
+    setTimeout(() => {
+      bringTacticalMarkersToFront();
+      try { marker.openPopup(); } catch (_) {}
+    }, 40);
+  }
   return marker;
 }
 
 function drawMarkers() {
+  state.markerLayers?.forEach(layer => {
+    try { map.removeLayer(layer); } catch (_) {}
+  });
+  state.markerLayers = new Map();
   state.markers.forEach(m => addMarkerToMap(m));
+  bringTacticalMarkersToFront();
 }
 
 function updatePosition(pos, center = true) {
@@ -835,6 +880,7 @@ $('#addMarkerBtn').addEventListener('click', () => {
 $('#markerForm').addEventListener('submit', e => {
   if (e.submitter?.value === 'cancel') {
     state.pendingMarker = null;
+    document.body.classList.remove('placing-marker');
     return;
   }
   const type = $('#markerWaypoint')?.value || 'wp';
@@ -848,6 +894,7 @@ $('#markerForm').addEventListener('submit', e => {
     waypointLabel: wp.label,
     symbol: wp.symbol
   };
+  document.body.classList.add('placing-marker');
   setMapStatus(`Punto seleccionado: ${wp.label}. Pulsa en el plano para colocarlo.`);
 });
 
@@ -862,8 +909,15 @@ function handleMapClick(e) {
   };
   state.markers.push(m);
   persist('c2-markers', state.markers);
-  addMarkerToMap(m, true);
+  const layer = addMarkerToMap(m, true);
+  bringTacticalMarkersToFront();
+  // Pequeño refresco del mapa para que el icono aparezca inmediatamente encima del plano WMS.
+  requestAnimationFrame(() => {
+    try { layer?.setZIndexOffset(1000000); } catch (_) {}
+    bringTacticalMarkersToFront();
+  });
   state.pendingMarker = null;
+  document.body.classList.remove('placing-marker');
   $('#markerForm').reset();
   delete $('#markerName').dataset.touched;
   setMapStatus('Punto colocado');
@@ -874,7 +928,13 @@ function deleteMarker(id) {
   if (!confirm('¿Eliminar este punto?')) return;
   state.markers = state.markers.filter(m => m.id !== id);
   persist('c2-markers', state.markers);
-  location.reload();
+  const layer = state.markerLayers?.get(id);
+  if (layer) {
+    try { map.removeLayer(layer); } catch (_) {}
+    state.markerLayers.delete(id);
+  }
+  drawMarkers();
+  setMapStatus('Punto eliminado');
 }
 
 function escapeHtml(v) {
@@ -1141,7 +1201,7 @@ function initPwaInstallPrompt() {
 }
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=tacnav-waypoints-v24').catch(console.error));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=tacnav-waypoints-v25').catch(console.error));
 }
 
 initPwaInstallPrompt();
