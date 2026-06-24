@@ -20,7 +20,7 @@ let ignRaster = null;
 let detailTimer = null;
 let mapRequestSeq = 0;
 
-const MAP_VERSION = 'ign-online-fast-wms-v17';
+const MAP_VERSION = 'ign-online-speed-v18';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -115,13 +115,25 @@ function viewPixelSize() {
 function createIgnSingleImageRenderer() {
   const cfgAttributions = new Set();
   let activeOverlay = null;
-  let loadingOverlay = null;
   let activeBounds = null;
   let activeZoom = null;
   let activeKey = activeMapKey;
   let activeQuality = 'none';
   let requestId = 0;
   let detailTimerLocal = null;
+  let loadingImage = null;
+  let loadingUrl = '';
+
+  function cancelLoadingImage() {
+    if (!loadingImage) return;
+    try {
+      loadingImage.onload = null;
+      loadingImage.onerror = null;
+      loadingImage.src = '';
+    } catch (_) {}
+    loadingImage = null;
+    loadingUrl = '';
+  }
 
   function removeOverlay(overlay) {
     if (!overlay) return;
@@ -132,8 +144,7 @@ function createIgnSingleImageRenderer() {
     requestId++;
     clearTimeout(detailTimer);
     clearTimeout(detailTimerLocal);
-    if (loadingOverlay) removeOverlay(loadingOverlay);
-    loadingOverlay = null;
+    cancelLoadingImage();
     activeBounds = null;
     activeZoom = null;
     activeQuality = 'none';
@@ -155,10 +166,12 @@ function createIgnSingleImageRenderer() {
   }
 
   function bufferFor(reason, quality) {
-    // Antes se pedía una imagen demasiado grande; tardaba mucho.
-    // Ahora primero se pide una imagen ligera y después una de detalle.
-    if (quality === 'detail') return reason === 'zoomend' ? 0.44 : 0.36;
-    return reason === 'zoomend' ? 0.30 : 0.24;
+    // V18: carga más rápida. Se reduce la imagen inmediata y el detalle queda en segundo plano.
+    // La imagen actual sigue moviéndose debajo, así que no hace falta pedir tanto margen.
+    if (quality === 'detail') return reason === 'zoomend' ? 0.30 : 0.26;
+    if (reason === 'zoomend') return 0.18;
+    if (reason === 'layer-change' || reason === 'force-refresh') return 0.16;
+    return 0.14;
   }
 
   function bufferedPixelBounds(reason = 'view', quality = 'fast') {
@@ -182,18 +195,18 @@ function createIgnSingleImageRenderer() {
   function pixelSizeFromBounds(pb, quality = 'fast') {
     const cssWidth = Math.max(1, pb.max.x - pb.min.x);
     const cssHeight = Math.max(1, pb.max.y - pb.min.y);
-    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.35);
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.25);
 
-    // FAST: muy rápido para que al mover/zoom no espere tanto.
-    // DETAIL: mejora después si el usuario se queda quieto.
-    const targetScale = quality === 'detail' ? Math.min(dpr, 1.18) : 0.72;
-    const maxSide = quality === 'detail' ? 2304 : 1400;
-    const scale = Math.max(0.45, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
+    // La primera carga es ligera para que aparezca antes.
+    // El detalle sube después si el usuario deja el plano quieto.
+    const targetScale = quality === 'detail' ? Math.min(dpr, 1.03) : 0.54;
+    const maxSide = quality === 'detail' ? 1850 : 1024;
+    const scale = Math.max(0.38, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
     return {
       cssWidth,
       cssHeight,
-      width: Math.max(280, Math.round(cssWidth * scale)),
-      height: Math.max(280, Math.round(cssHeight * scale))
+      width: Math.max(220, Math.round(cssWidth * scale)),
+      height: Math.max(220, Math.round(cssHeight * scale))
     };
   }
 
@@ -212,7 +225,42 @@ function createIgnSingleImageRenderer() {
       if (activeKey === activeMapKey && activeQuality !== 'detail') {
         render(false, reason, 'detail');
       }
-    }, 360);
+    }, 780);
+  }
+
+  function addLoadedOverlay(url, overlayBounds, quality, cfg, id, key) {
+    if (id !== requestId || key !== activeMapKey) return;
+    const nextOverlay = L.imageOverlay(url, overlayBounds, {
+      pane: 'ignPane',
+      opacity: 0,
+      className: `ign-wms-overlay ign-wms-${quality}`,
+      interactive: false,
+      crossOrigin: false,
+      alt: cfg.label
+    });
+
+    nextOverlay.once('load', () => {
+      if (id !== requestId || key !== activeMapKey) {
+        removeOverlay(nextOverlay);
+        return;
+      }
+      requestAnimationFrame(() => nextOverlay.setOpacity(1));
+    });
+
+    nextOverlay.addTo(map);
+    const old = activeOverlay;
+    activeOverlay = nextOverlay;
+    activeBounds = overlayBounds;
+    activeZoom = map.getZoom();
+    activeKey = key;
+    activeQuality = quality;
+
+    if (old && old !== nextOverlay) {
+      old.setOpacity(0);
+      setTimeout(() => removeOverlay(old), quality === 'fast' ? 55 : 110);
+    }
+    setMapStatus(`${cfg.label} listo z${map.getZoom().toFixed(1)}${quality === 'fast' ? ' · rápido' : ''}`);
+    if (quality === 'fast') scheduleDetail('post-fast');
   }
 
   function render(force = false, reason = 'view', quality = 'fast') {
@@ -237,65 +285,47 @@ function createIgnSingleImageRenderer() {
     updateAttribution(key);
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
-      : `Cargando rápido ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-FAST]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
+      : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
+    console.info('[SECCION C2][IGN-WMS-SPEED-V18]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
 
-    if (loadingOverlay) removeOverlay(loadingOverlay);
+    // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
+    // Esto evita que descargas viejas bloqueen la nueva capa.
+    cancelLoadingImage();
 
-    const nextOverlay = L.imageOverlay(url, overlayBounds, {
-      pane: 'ignPane',
-      opacity: 0,
-      className: `ign-wms-overlay ign-wms-${quality}`,
-      interactive: false,
-      crossOrigin: false,
-      alt: cfg.label
-    });
-    loadingOverlay = nextOverlay;
+    const img = new Image();
+    loadingImage = img;
+    loadingUrl = url;
+    try {
+      img.decoding = 'async';
+      img.loading = 'eager';
+      img.fetchPriority = quality === 'fast' ? 'high' : 'low';
+    } catch (_) {}
 
-    nextOverlay.once('load', () => {
-      if (id !== requestId || key !== activeMapKey) {
-        removeOverlay(nextOverlay);
-        return;
-      }
-      loadingOverlay = null;
-      nextOverlay.setOpacity(1);
+    img.onload = () => {
+      if (img !== loadingImage || id !== requestId || key !== activeMapKey || loadingUrl !== url) return;
+      loadingImage = null;
+      loadingUrl = '';
+      addLoadedOverlay(url, overlayBounds, quality, cfg, id, key);
+    };
 
-      const old = activeOverlay;
-      activeOverlay = nextOverlay;
-      activeBounds = overlayBounds;
-      activeZoom = map.getZoom();
-      activeKey = key;
-      activeQuality = quality;
-
-      if (old && old !== nextOverlay) {
-        old.setOpacity(0);
-        setTimeout(() => removeOverlay(old), quality === 'fast' ? 90 : 160);
-      }
-      setMapStatus(`${cfg.label} listo z${map.getZoom().toFixed(1)}${quality === 'fast' ? ' · rápido' : ''}`);
-      if (quality === 'fast') scheduleDetail('post-fast');
-    });
-
-    nextOverlay.once('error', () => {
-      if (id !== requestId) {
-        removeOverlay(nextOverlay);
-        return;
-      }
-      loadingOverlay = null;
-      removeOverlay(nextOverlay);
-      console.warn('[SECCION C2][IGN-WMS-FAST] Error cargando plano', { quality, url });
+    img.onerror = () => {
+      if (img !== loadingImage || id !== requestId) return;
+      loadingImage = null;
+      loadingUrl = '';
+      console.warn('[SECCION C2][IGN-WMS-SPEED-V18] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
         setTimeout(() => {
           if (id === requestId && key === activeMapKey) render(true, 'retry', 'fast');
-        }, 550);
+        }, 420);
       }
-    });
+    };
 
-    nextOverlay.addTo(map);
+    img.src = url;
   }
 
-  function schedule(force = false, delay = 80, reason = 'schedule') {
+  function schedule(force = false, delay = 45, reason = 'schedule') {
     clearTimeout(detailTimer);
     clearTimeout(detailTimerLocal);
     detailTimer = setTimeout(() => render(force, reason, 'fast'), delay);
@@ -316,10 +346,9 @@ function createIgnSingleImageRenderer() {
 
   return { render, schedule, setLayer, clear };
 }
-
 function refreshOnlineMap(force = false) {
   if (!ignRaster) return;
-  const delay = force ? 20 : 70;
+  const delay = force ? 10 : 35;
   ignRaster.schedule(force, delay, force ? 'force-refresh' : 'view-change');
 }
 
@@ -372,9 +401,9 @@ function initMap() {
   // Durante el movimiento no pedimos imágenes nuevas continuamente: el plano actual se desplaza.
   // Cuando el movimiento/zoom termina, se carga una imagen nueva si hace falta.
   map.on('zoomstart movestart', () => setMapStatus('Plano en memoria'));
-  map.on('moveend', () => ignRaster?.schedule(false, 70, 'moveend'));
-  map.on('zoomend', () => ignRaster?.schedule(true, 45, 'zoomend'));
-  map.on('resize viewreset', () => ignRaster?.schedule(true, 55, 'resize'));
+  map.on('moveend', () => ignRaster?.schedule(false, 25, 'moveend'));
+  map.on('zoomend', () => ignRaster?.schedule(true, 15, 'zoomend'));
+  map.on('resize viewreset', () => ignRaster?.schedule(true, 25, 'resize'));
 
   switchMapLayer(activeMapKey);
   drawMarkers();
