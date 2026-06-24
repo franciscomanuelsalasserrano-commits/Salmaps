@@ -26,7 +26,7 @@ const GPS_TARGET_ACCURACY_METERS = 12;
 const GPS_BURST_TIMEOUT_MS = 9000;
 const GPS_MIN_ZOOM = 18;
 
-const MAP_VERSION = 'ign-online-speed-v21-landscape';
+const MAP_VERSION = 'ign-online-speed-v22-pwa-install';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -292,7 +292,7 @@ function createIgnSingleImageRenderer() {
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
       : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-SPEED-V20]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
+    console.info('[SECCION C2][IGN-WMS-SPEED-V22]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
 
     // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
     // Esto evita que descargas viejas bloqueen la nueva capa.
@@ -318,7 +318,7 @@ function createIgnSingleImageRenderer() {
       if (img !== loadingImage || id !== requestId) return;
       loadingImage = null;
       loadingUrl = '';
-      console.warn('[SECCION C2][IGN-WMS-SPEED-V20] Error cargando plano', { quality, url });
+      console.warn('[SECCION C2][IGN-WMS-SPEED-V22] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
@@ -807,7 +807,7 @@ $('#importInput').addEventListener('change', async e => {
 });
 
 
-// V21: orientación horizontal en móvil y reajuste real del plano.
+// V21/V22: orientación horizontal en móvil, PWA instalable y reajuste real del plano.
 function isStandalonePwa() {
   return window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator.standalone === true;
 }
@@ -872,10 +872,92 @@ function initLandscapeMode() {
   });
 }
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
+
+let deferredInstallPrompt = null;
+
+function setInstallButtonVisible(visible) {
+  const btn = $('#installAppBtn');
+  if (!btn) return;
+  const installed = isStandalonePwa();
+  document.body.classList.toggle('is-pwa-installed', installed);
+  btn.classList.toggle('hidden', installed || !visible);
 }
 
+function showManualInstallInstructions() {
+  const dialog = $('#installDialog');
+  if (dialog?.showModal) {
+    dialog.showModal();
+    return;
+  }
+  alert('Para instalar la app: en Android/Chrome abre el menú ⋮ y pulsa "Instalar app" o "Añadir a pantalla de inicio". En iPhone/Safari pulsa compartir y "Añadir a pantalla de inicio".');
+}
+
+function initPwaInstallPrompt() {
+  const btn = $('#installAppBtn');
+  if (!btn) return;
+
+  setInstallButtonVisible(!isStandalonePwa());
+
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    setInstallButtonVisible(true);
+  });
+
+  btn.addEventListener('click', async () => {
+    if (isStandalonePwa()) {
+      setInstallButtonVisible(false);
+      return;
+    }
+
+    if (!deferredInstallPrompt) {
+      showManualInstallInstructions();
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Instalando…';
+    try {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      if (choice?.outcome === 'accepted') {
+        btn.textContent = 'Instalada';
+        setInstallButtonVisible(false);
+      } else {
+        btn.textContent = 'Instalar app';
+        setInstallButtonVisible(true);
+      }
+    } catch (err) {
+      console.warn('[SECCION C2][PWA] No se pudo mostrar el instalador', err);
+      btn.textContent = 'Instalar app';
+      showManualInstallInstructions();
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    setInstallButtonVisible(false);
+    document.body.classList.add('is-pwa-installed');
+    tryLockLandscape('appinstalled');
+    refreshLayoutAfterOrientation('appinstalled');
+  });
+
+  try {
+    window.matchMedia('(display-mode: standalone)')?.addEventListener('change', () => {
+      setInstallButtonVisible(!isStandalonePwa());
+      refreshLayoutAfterOrientation('display-mode-change');
+    });
+  } catch (_) {}
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=pwa-install-v22').catch(console.error));
+}
+
+initPwaInstallPrompt();
 initLandscapeMode();
 initMap();
 map.on('click', handleMapClick);
