@@ -1,4 +1,4 @@
-const CACHE = 'tacnav-speed-v28';
+const CACHE = 'tacnav-map-balanced-v29';
 const LOCAL = [
   './',
   './index.html',
@@ -31,7 +31,7 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // V28: mantiene la app local en caché, pero los planos IGN/PNOA se piden siempre online.
+  // V29: base estable V27 con ajuste ligero de rendimiento; no cachea planos IGN ni librerías externas.
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(event.request));
     return;
