@@ -26,6 +26,120 @@ const GPS_TARGET_ACCURACY_METERS = 12;
 const GPS_BURST_TIMEOUT_MS = 9000;
 const GPS_MIN_ZOOM = 18;
 
+
+// V24: catálogo rápido de waypoints tácticos.
+// Son símbolos genéricos para navegación, mando y control, logística, sanidad y zonas.
+// Se guardan localmente igual que los puntos anteriores.
+const WAYPOINT_CATEGORIES = [
+  {
+    id: 'nav',
+    label: 'Navegación',
+    items: [
+      { id: 'wp', label: 'Waypoint', symbol: 'WP', cls: 'wp-nav' },
+      { id: 'cp', label: 'Checkpoint / Control', symbol: 'CP', cls: 'wp-nav' },
+      { id: 'rp', label: 'Punto reunión', symbol: 'RP', cls: 'wp-nav' },
+      { id: 'start', label: 'Inicio ruta', symbol: 'IN', cls: 'wp-nav' },
+      { id: 'end', label: 'Fin ruta', symbol: 'FIN', cls: 'wp-nav' },
+      { id: 'turn', label: 'Punto giro', symbol: '↱', cls: 'wp-nav' },
+      { id: 'pass', label: 'Paso / Vado', symbol: 'PAS', cls: 'wp-nav' },
+      { id: 'bridge', label: 'Puente', symbol: 'BR', cls: 'wp-nav' }
+    ]
+  },
+  {
+    id: 'c2',
+    label: 'Mando y control',
+    items: [
+      { id: 'cmd', label: 'Puesto de mando', symbol: 'C2', cls: 'wp-c2' },
+      { id: 'cmd-fwd', label: 'Puesto mando avanzado', symbol: 'C2A', cls: 'wp-c2' },
+      { id: 'op', label: 'Observatorio / OP', symbol: 'OP', cls: 'wp-c2' },
+      { id: 'link', label: 'Enlace', symbol: 'ENL', cls: 'wp-c2' },
+      { id: 'coord', label: 'Punto coordinación', symbol: 'CO', cls: 'wp-c2' },
+      { id: 'brief', label: 'Punto briefing', symbol: 'BRF', cls: 'wp-c2' }
+    ]
+  },
+  {
+    id: 'friendly',
+    label: 'Unidades propias',
+    items: [
+      { id: 'team', label: 'Equipo', symbol: 'EQ', cls: 'wp-friendly' },
+      { id: 'squad', label: 'Escuadra', symbol: 'ESC', cls: 'wp-friendly' },
+      { id: 'section', label: 'Sección', symbol: 'SEC', cls: 'wp-friendly' },
+      { id: 'patrol', label: 'Patrulla', symbol: 'PAT', cls: 'wp-friendly' },
+      { id: 'vehicle', label: 'Vehículo', symbol: 'VEH', cls: 'wp-friendly' },
+      { id: 'base', label: 'Base / POS propia', symbol: 'BASE', cls: 'wp-friendly' },
+      { id: 'security', label: 'Seguridad', symbol: 'SEG', cls: 'wp-friendly' }
+    ]
+  },
+  {
+    id: 'air',
+    label: 'Aéreo / extracción',
+    items: [
+      { id: 'lz', label: 'Zona aterrizaje LZ', symbol: 'LZ', cls: 'wp-air' },
+      { id: 'hlz', label: 'Helicóptero HLZ', symbol: 'HLZ', cls: 'wp-air' },
+      { id: 'pickup', label: 'Punto recogida', symbol: 'PU', cls: 'wp-air' },
+      { id: 'drop', label: 'Punto entrega', symbol: 'DZ', cls: 'wp-air' }
+    ]
+  },
+  {
+    id: 'log',
+    label: 'Logística',
+    items: [
+      { id: 'supply', label: 'Reabastecimiento', symbol: 'LOG', cls: 'wp-log' },
+      { id: 'ammo', label: 'Munición', symbol: 'AM', cls: 'wp-log' },
+      { id: 'fuel', label: 'Combustible', symbol: 'FUEL', cls: 'wp-log' },
+      { id: 'water', label: 'Agua', symbol: 'H2O', cls: 'wp-log' },
+      { id: 'repair', label: 'Taller / recuperación', symbol: 'REP', cls: 'wp-log' },
+      { id: 'cache', label: 'Depósito / caché', symbol: 'DEP', cls: 'wp-log' }
+    ]
+  },
+  {
+    id: 'medical',
+    label: 'Sanidad',
+    items: [
+      { id: 'med', label: 'Punto sanitario', symbol: '+', cls: 'wp-med' },
+      { id: 'medevac', label: 'MEDEVAC', symbol: 'ME', cls: 'wp-med' },
+      { id: 'casualty', label: 'Herido / baja', symbol: 'BAJ', cls: 'wp-med' },
+      { id: 'ambulance', label: 'Ambulancia', symbol: 'AMB', cls: 'wp-med' }
+    ]
+  },
+  {
+    id: 'risk',
+    label: 'Riesgos / incidencias',
+    items: [
+      { id: 'danger', label: 'Zona peligrosa', symbol: '!', cls: 'wp-risk' },
+      { id: 'obstacle', label: 'Obstáculo', symbol: 'OBS', cls: 'wp-risk' },
+      { id: 'blocked', label: 'Paso bloqueado', symbol: 'BLQ', cls: 'wp-risk' },
+      { id: 'mine', label: 'Mina / UXO', symbol: 'UXO', cls: 'wp-risk' },
+      { id: 'fire', label: 'Incendio', symbol: 'FIR', cls: 'wp-risk' },
+      { id: 'nbq', label: 'Zona NBQ', symbol: 'NBQ', cls: 'wp-risk' }
+    ]
+  },
+  {
+    id: 'info',
+    label: 'Información / zonas',
+    items: [
+      { id: 'poi', label: 'Punto interés', symbol: 'PI', cls: 'wp-info' },
+      { id: 'objective', label: 'Objetivo', symbol: 'OBJ', cls: 'wp-obj' },
+      { id: 'area', label: 'Área interés', symbol: 'AI', cls: 'wp-info' },
+      { id: 'photo', label: 'Foto / referencia', symbol: 'CAM', cls: 'wp-info' },
+      { id: 'note', label: 'Nota', symbol: 'N', cls: 'wp-info' },
+      { id: 'unknown', label: 'Sin identificar', symbol: '?', cls: 'wp-unknown' }
+    ]
+  }
+];
+
+const WAYPOINTS = new Map(WAYPOINT_CATEGORIES.flatMap(cat => cat.items.map(item => [item.id, { ...item, category: cat.id, categoryLabel: cat.label }])));
+const LEGACY_WAYPOINTS = {
+  friendly: { id: 'friendly', label: 'Propio', symbol: 'P', cls: 'wp-friendly', category: 'friendly', categoryLabel: 'Unidades propias' },
+  objective: { id: 'objective', label: 'Objetivo', symbol: 'OBJ', cls: 'wp-obj', category: 'info', categoryLabel: 'Información / zonas' },
+  warning: { id: 'warning', label: 'Alerta', symbol: '!', cls: 'wp-risk', category: 'risk', categoryLabel: 'Riesgos / incidencias' },
+  medical: { id: 'medical', label: 'Sanidad', symbol: '+', cls: 'wp-med', category: 'medical', categoryLabel: 'Sanidad' }
+};
+
+function waypointFor(type) {
+  return WAYPOINTS.get(type) || LEGACY_WAYPOINTS[type] || WAYPOINTS.get('wp') || LEGACY_WAYPOINTS.friendly;
+}
+
 const MAP_VERSION = 'ign-online-speed-v22-pwa-install';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
@@ -475,20 +589,39 @@ function gpsDivIcon(heading = 0) {
   });
 }
 
-function iconFor(type) {
-  const cls = type === 'warning' ? 'warning-marker' : type;
+function iconFor(markerOrType) {
+  const marker = typeof markerOrType === 'object' && markerOrType ? markerOrType : { type: markerOrType };
+  const wp = waypointFor(marker.type);
+  const symbol = escapeHtml(marker.symbol || wp.symbol || '•');
   return L.divIcon({
-    className: '',
-    html: `<div class="tactical-marker ${cls}"></div>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11]
+    className: 'tactical-marker-icon',
+    html: `<div class="tactical-marker ${wp.cls}" title="${escapeHtml(marker.name || wp.label)}"><span>${symbol}</span></div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -18]
   });
 }
 
-function drawMarkers() {
-  state.markers.forEach(m => L.marker([m.lat, m.lng], { icon: iconFor(m.type) })
+function markerPopupHtml(m) {
+  const wp = waypointFor(m.type);
+  return `<div class="marker-popup">
+    <strong>${escapeHtml(m.name || wp.label)}</strong>
+    <small>${escapeHtml(wp.categoryLabel)} · ${escapeHtml(wp.label)}</small>
+    <small>${Number(m.lat).toFixed(6)}, ${Number(m.lng).toFixed(6)}</small>
+    <button type="button" data-delete-marker="${escapeHtml(m.id)}">Eliminar punto</button>
+  </div>`;
+}
+
+function addMarkerToMap(m, open = false) {
+  const marker = L.marker([m.lat, m.lng], { icon: iconFor(m), keyboard: false })
     .addTo(map)
-    .bindPopup(`<strong>${escapeHtml(m.name)}</strong><br>${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`));
+    .bindPopup(markerPopupHtml(m));
+  if (open) marker.openPopup();
+  return marker;
+}
+
+function drawMarkers() {
+  state.markers.forEach(m => addMarkerToMap(m));
 }
 
 function updatePosition(pos, center = true) {
@@ -664,11 +797,58 @@ $('#trackBtn').addEventListener('click', () => {
   $('#trackBtn').textContent = 'Detener seguimiento';
 });
 
-$('#addMarkerBtn').addEventListener('click', () => $('#markerDialog').showModal());
+function populateWaypointDialog() {
+  const categorySelect = $('#markerCategory');
+  const waypointSelect = $('#markerWaypoint');
+  if (!categorySelect || !waypointSelect) return;
+
+  categorySelect.innerHTML = WAYPOINT_CATEGORIES.map(cat => `<option value="${cat.id}">${escapeHtml(cat.label)}</option>`).join('');
+
+  const fillWaypoints = () => {
+    const cat = WAYPOINT_CATEGORIES.find(c => c.id === categorySelect.value) || WAYPOINT_CATEGORIES[0];
+    waypointSelect.innerHTML = cat.items.map(item => `<option value="${item.id}">${escapeHtml(item.symbol)} · ${escapeHtml(item.label)}</option>`).join('');
+    updateWaypointPreview();
+  };
+
+  categorySelect.addEventListener('change', fillWaypoints);
+  waypointSelect.addEventListener('change', updateWaypointPreview);
+  fillWaypoints();
+}
+
+function updateWaypointPreview() {
+  const preview = $('#waypointPreview');
+  const waypointId = $('#markerWaypoint')?.value;
+  if (!preview || !waypointId) return;
+  const wp = waypointFor(waypointId);
+  preview.innerHTML = `<div class="tactical-marker ${wp.cls}"><span>${escapeHtml(wp.symbol)}</span></div><div><strong>${escapeHtml(wp.label)}</strong><small>${escapeHtml(wp.categoryLabel)}</small></div>`;
+  const nameInput = $('#markerName');
+  if (nameInput && !nameInput.dataset.touched) nameInput.placeholder = wp.label;
+}
+
+$('#markerName')?.addEventListener('input', () => { $('#markerName').dataset.touched = '1'; });
+$('#addMarkerBtn').addEventListener('click', () => {
+  state.pendingMarker = null;
+  populateWaypointDialog();
+  $('#markerDialog').showModal();
+});
+
 $('#markerForm').addEventListener('submit', e => {
-  if (e.submitter?.value === 'cancel') return;
-  state.pendingMarker = { name: $('#markerName').value.trim(), type: $('#markerType').value };
-  alert('Pulsa una ubicación del mapa para colocar el punto.');
+  if (e.submitter?.value === 'cancel') {
+    state.pendingMarker = null;
+    return;
+  }
+  const type = $('#markerWaypoint')?.value || 'wp';
+  const wp = waypointFor(type);
+  const name = $('#markerName')?.value.trim() || wp.label;
+  state.pendingMarker = {
+    name,
+    type,
+    category: wp.category,
+    categoryLabel: wp.categoryLabel,
+    waypointLabel: wp.label,
+    symbol: wp.symbol
+  };
+  setMapStatus(`Punto seleccionado: ${wp.label}. Pulsa en el plano para colocarlo.`);
 });
 
 function handleMapClick(e) {
@@ -682,12 +862,19 @@ function handleMapClick(e) {
   };
   state.markers.push(m);
   persist('c2-markers', state.markers);
-  L.marker(e.latlng, { icon: iconFor(m.type) })
-    .addTo(map)
-    .bindPopup(`<strong>${escapeHtml(m.name)}</strong>`)
-    .openPopup();
+  addMarkerToMap(m, true);
   state.pendingMarker = null;
   $('#markerForm').reset();
+  delete $('#markerName').dataset.touched;
+  setMapStatus('Punto colocado');
+}
+
+function deleteMarker(id) {
+  if (!id) return;
+  if (!confirm('¿Eliminar este punto?')) return;
+  state.markers = state.markers.filter(m => m.id !== id);
+  persist('c2-markers', state.markers);
+  location.reload();
 }
 
 function escapeHtml(v) {
@@ -954,13 +1141,17 @@ function initPwaInstallPrompt() {
 }
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=pwa-install-v22').catch(console.error));
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?v=tacnav-waypoints-v24').catch(console.error));
 }
 
 initPwaInstallPrompt();
 initLandscapeMode();
 initMap();
 map.on('click', handleMapClick);
+map.on('popupopen', e => {
+  const btn = e.popup?._contentNode?.querySelector?.('[data-delete-marker]');
+  if (btn) btn.addEventListener('click', () => deleteMarker(btn.dataset.deleteMarker), { once: true });
+});
 initNav();
 updateNetwork();
 loadSettings();
