@@ -145,7 +145,7 @@ function waypointFor(type) {
   return WAYPOINTS.get(type) || LEGACY_WAYPOINTS[type] || WAYPOINTS.get('wp') || LEGACY_WAYPOINTS.friendly;
 }
 
-const MAP_VERSION = 'tacnav-v30-restaurado-buffer-plano';
+const MAP_VERSION = 'ign-online-speed-v22-pwa-install';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -291,13 +291,12 @@ function createIgnSingleImageRenderer() {
   }
 
   function bufferFor(reason, quality) {
-    // V30: base estable V27. Solo se aumenta el margen geográfico cargado
-    // para que al mover ligeramente no haya que pedir plano nuevo continuamente.
-    // No se toca GPS, waypoints ni eventos del mapa.
-    if (quality === 'detail') return reason === 'zoomend' ? 0.34 : 0.30;
-    if (reason === 'zoomend') return 0.22;
-    if (reason === 'layer-change' || reason === 'force-refresh') return 0.20;
-    return 0.20;
+    // V18: carga más rápida. Se reduce la imagen inmediata y el detalle queda en segundo plano.
+    // La imagen actual sigue moviéndose debajo, así que no hace falta pedir tanto margen.
+    if (quality === 'detail') return reason === 'zoomend' ? 0.30 : 0.26;
+    if (reason === 'zoomend') return 0.18;
+    if (reason === 'layer-change' || reason === 'force-refresh') return 0.16;
+    return 0.14;
   }
 
   function bufferedPixelBounds(reason = 'view', quality = 'fast') {
