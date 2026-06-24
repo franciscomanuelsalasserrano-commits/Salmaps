@@ -145,7 +145,7 @@ function waypointFor(type) {
   return WAYPOINTS.get(type) || LEGACY_WAYPOINTS[type] || WAYPOINTS.get('wp') || LEGACY_WAYPOINTS.friendly;
 }
 
-const MAP_VERSION = 'tacnav-v29-balanced-map';
+const MAP_VERSION = 'tacnav-v30-restaurado-buffer-plano';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -291,12 +291,13 @@ function createIgnSingleImageRenderer() {
   }
 
   function bufferFor(reason, quality) {
-    // V29 equilibrado: vuelve a la base estable V27 y solo afina el margen.
-    // La imagen rápida no se agranda demasiado para evitar lag; el detalle entra después.
-    if (quality === 'detail') return reason === 'zoomend' ? 0.28 : 0.24;
-    if (reason === 'zoomend') return 0.18;
-    if (reason === 'layer-change' || reason === 'force-refresh') return 0.18;
-    return 0.16;
+    // V30: base estable V27. Solo se aumenta el margen geográfico cargado
+    // para que al mover ligeramente no haya que pedir plano nuevo continuamente.
+    // No se toca GPS, waypoints ni eventos del mapa.
+    if (quality === 'detail') return reason === 'zoomend' ? 0.34 : 0.30;
+    if (reason === 'zoomend') return 0.22;
+    if (reason === 'layer-change' || reason === 'force-refresh') return 0.20;
+    return 0.20;
   }
 
   function bufferedPixelBounds(reason = 'view', quality = 'fast') {
@@ -320,19 +321,18 @@ function createIgnSingleImageRenderer() {
   function pixelSizeFromBounds(pb, quality = 'fast') {
     const cssWidth = Math.max(1, pb.max.x - pb.min.x);
     const cssHeight = Math.max(1, pb.max.y - pb.min.y);
-    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.20);
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.25);
 
-    // V29: carga inicial algo más ligera que V27, sin irse al extremo que provocó lag en V28.
-    // Primero entra una imagen rápida; si el mapa queda quieto, entra la de detalle.
-    const targetScale = quality === 'detail' ? Math.min(dpr, 0.98) : 0.48;
-    const maxSide = quality === 'detail' ? 1650 : 920;
-    const minSide = quality === 'detail' ? 240 : 220;
-    const scale = Math.max(0.36, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
+    // La primera carga es ligera para que aparezca antes.
+    // El detalle sube después si el usuario deja el plano quieto.
+    const targetScale = quality === 'detail' ? Math.min(dpr, 1.03) : 0.54;
+    const maxSide = quality === 'detail' ? 1850 : 1024;
+    const scale = Math.max(0.38, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
     return {
       cssWidth,
       cssHeight,
-      width: Math.max(minSide, Math.round(cssWidth * scale)),
-      height: Math.max(minSide, Math.round(cssHeight * scale))
+      width: Math.max(220, Math.round(cssWidth * scale)),
+      height: Math.max(220, Math.round(cssHeight * scale))
     };
   }
 
@@ -351,7 +351,7 @@ function createIgnSingleImageRenderer() {
       if (activeKey === activeMapKey && activeQuality !== 'detail') {
         render(false, reason, 'detail');
       }
-    }, 900);
+    }, 780);
   }
 
   function addLoadedOverlay(url, overlayBounds, quality, cfg, id, key) {
@@ -412,6 +412,8 @@ function createIgnSingleImageRenderer() {
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
       : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
+    console.info('[SECCION C2][IGN-WMS-SPEED-V22]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
+
     // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
     // Esto evita que descargas viejas bloqueen la nueva capa.
     cancelLoadingImage();
@@ -436,7 +438,7 @@ function createIgnSingleImageRenderer() {
       if (img !== loadingImage || id !== requestId) return;
       loadingImage = null;
       loadingUrl = '';
-      console.warn('[TACNAV][WMS-V29] Error cargando plano', { quality, url });
+      console.warn('[SECCION C2][IGN-WMS-SPEED-V22] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
@@ -472,7 +474,7 @@ function createIgnSingleImageRenderer() {
 }
 function refreshOnlineMap(force = false) {
   if (!ignRaster) return;
-  const delay = force ? 10 : 50;
+  const delay = force ? 10 : 35;
   ignRaster.schedule(force, delay, force ? 'force-refresh' : 'view-change');
 }
 
@@ -534,13 +536,16 @@ function initMap() {
   // Durante el movimiento no pedimos imágenes nuevas continuamente: el plano actual se desplaza.
   // Cuando el movimiento/zoom termina, se carga una imagen nueva si hace falta.
   map.on('zoomstart movestart', () => setMapStatus('Plano en memoria'));
-  map.on('moveend', () => ignRaster?.schedule(false, 55, 'moveend'));
-  map.on('zoomend', () => ignRaster?.schedule(true, 35, 'zoomend'));
-  map.on('resize viewreset', () => ignRaster?.schedule(true, 60, 'resize'));
+  map.on('moveend', () => ignRaster?.schedule(false, 25, 'moveend'));
+  map.on('zoomend', () => ignRaster?.schedule(true, 15, 'zoomend'));
+  map.on('resize viewreset', () => ignRaster?.schedule(true, 25, 'resize'));
 
   // El triángulo de GPS no depende de las capas del plano: es HTML flotante encima del mapa.
   // Se recalcula en cualquier movimiento/zoom para que no desaparezca ni se quede desplazado.
-  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', scheduleOverlayPositionUpdate);
+  map.on('move zoom zoomstart zoomend movestart moveend resize viewreset', () => {
+    updateGpsFloat();
+    updateTacticalHtmlMarkers();
+  });
 
   switchMapLayer(activeMapKey);
   installDirectWaypointPlacement();
@@ -586,16 +591,6 @@ function showGpsFloat(latlng) {
 
 function hideGpsFloat() {
   if (state.gpsFloat) state.gpsFloat.classList.remove('visible');
-}
-
-let overlayPositionRaf = 0;
-function scheduleOverlayPositionUpdate() {
-  if (overlayPositionRaf) return;
-  overlayPositionRaf = requestAnimationFrame(() => {
-    overlayPositionRaf = 0;
-    updateGpsFloat();
-    updateTacticalHtmlMarkers();
-  });
 }
 
 function gpsDivIcon(heading = 0) {
