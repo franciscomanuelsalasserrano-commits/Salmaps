@@ -20,7 +20,11 @@ let ignRaster = null;
 let detailTimer = null;
 let mapRequestSeq = 0;
 
-const MAP_VERSION = 'ign-online-speed-v18';
+const GPS_TARGET_ACCURACY_METERS = 12;
+const GPS_BURST_TIMEOUT_MS = 9000;
+const GPS_MIN_ZOOM = 18;
+
+const MAP_VERSION = 'ign-online-speed-v19-gps';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -382,8 +386,13 @@ function initMap() {
   map.getPane('ignPane').style.zIndex = 220;
   map.getPane('ignPane').style.pointerEvents = 'none';
 
+  map.createPane('accuracyPane');
+  map.getPane('accuracyPane').style.zIndex = 640;
+  map.getPane('accuracyPane').style.pointerEvents = 'none';
+
   map.createPane('gpsPane');
-  map.getPane('gpsPane').style.zIndex = 650;
+  map.getPane('gpsPane').style.zIndex = 2000;
+  map.getPane('gpsPane').style.pointerEvents = 'none';
 
   // Asegurar que marcadores/puntos quedan por encima del plano WMS.
   map.getPane('markerPane').style.zIndex = 620;
@@ -410,11 +419,12 @@ function initMap() {
 }
 
 function gpsDivIcon(heading = 0) {
+  const safeHeading = Number.isFinite(heading) ? heading : 0;
   return L.divIcon({
-    className: 'gps-triangle-icon',
-    html: `<div class="gps-triangle" style="--heading:${heading}deg"><span></span></div>`,
-    iconSize: [38, 38],
-    iconAnchor: [19, 19]
+    className: 'gps-triangle-icon gps-triangle-top',
+    html: `<div class="gps-triangle" style="--heading:${safeHeading}deg"><span></span></div>`,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22]
   });
 }
 
@@ -444,11 +454,12 @@ function updatePosition(pos, center = true) {
   if (state.userMarker) {
     state.userMarker.setLatLng(ll);
     state.userMarker.setIcon(gpsDivIcon(state.heading));
+    state.userMarker.setZIndexOffset(100000);
   } else {
     state.userMarker = L.marker(ll, {
       icon: gpsDivIcon(state.heading),
       pane: 'gpsPane',
-      zIndexOffset: 10000,
+      zIndexOffset: 100000,
       interactive: false
     }).addTo(map).bindPopup('Mi posición');
   }
@@ -457,7 +468,7 @@ function updatePosition(pos, center = true) {
     state.accuracyCircle.setLatLng(ll).setRadius(accuracy);
   } else {
     state.accuracyCircle = L.circle(ll, {
-      pane: 'gpsPane',
+      pane: 'accuracyPane',
       radius: accuracy,
       color: '#1e88ff',
       weight: 1,
@@ -467,8 +478,11 @@ function updatePosition(pos, center = true) {
     }).addTo(map);
   }
 
+  if (state.accuracyCircle?.bringToBack) state.accuracyCircle.bringToBack();
+  if (state.userMarker?.bringToFront) state.userMarker.bringToFront();
+
   if (center) {
-    map.setView(ll, Math.max(map.getZoom(), 16), { animate: true });
+    map.setView(ll, Math.max(map.getZoom(), GPS_MIN_ZOOM), { animate: true });
     setTimeout(() => refreshOnlineMap(true), 450);
   }
 }
@@ -477,9 +491,86 @@ function geoError(e) {
   alert(`No se pudo obtener la posición: ${e.message}. Comprueba permisos y que la web esté en HTTPS.`);
 }
 
-$('#locateBtn').addEventListener('click', () => navigator.geolocation
-  ? navigator.geolocation.getCurrentPosition(p => updatePosition(p, true), geoError, { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 })
-  : alert('Geolocalización no disponible'));
+function isBetterGpsFix(candidate, currentBest) {
+  if (!candidate) return false;
+  if (!currentBest) return true;
+  const ca = candidate.coords?.accuracy ?? Infinity;
+  const ba = currentBest.coords?.accuracy ?? Infinity;
+  return ca < ba;
+}
+
+function locateWithBestAccuracy() {
+  if (!navigator.geolocation) return alert('Geolocalización no disponible');
+
+  const btn = $('#locateBtn');
+  const originalText = btn?.textContent || '◎ Mi posición';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Buscando GPS…';
+  }
+  $('#accuracy').textContent = 'Buscando posición precisa…';
+
+  let bestPosition = null;
+  let finished = false;
+  let watchId = null;
+
+  const finish = (reason = 'done') => {
+    if (finished) return;
+    finished = true;
+    if (watchId !== null) {
+      try { navigator.geolocation.clearWatch(watchId); } catch (_) {}
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+    if (bestPosition) {
+      updatePosition(bestPosition, true);
+      const acc = Math.round(bestPosition.coords.accuracy || 0);
+      $('#accuracy').textContent = `Precisión: ±${acc} m${reason === 'target' ? ' · GPS fijado' : ''}`;
+    } else {
+      $('#accuracy').textContent = 'Sin posición GPS';
+    }
+  };
+
+  const onPosition = pos => {
+    if (finished) return;
+    if (isBetterGpsFix(pos, bestPosition)) {
+      bestPosition = pos;
+      updatePosition(pos, false);
+      const acc = Math.round(pos.coords.accuracy || 0);
+      $('#accuracy').textContent = `Afinando GPS… ±${acc} m`;
+      if (acc > 0 && acc <= GPS_TARGET_ACCURACY_METERS) finish('target');
+    }
+  };
+
+  const onError = err => {
+    if (bestPosition) finish('fallback');
+    else {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+      geoError(err);
+    }
+  };
+
+  navigator.geolocation.getCurrentPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    timeout: GPS_BURST_TIMEOUT_MS,
+    maximumAge: 0
+  });
+
+  watchId = navigator.geolocation.watchPosition(onPosition, onError, {
+    enableHighAccuracy: true,
+    timeout: GPS_BURST_TIMEOUT_MS,
+    maximumAge: 0
+  });
+
+  setTimeout(() => finish('timeout'), GPS_BURST_TIMEOUT_MS);
+}
+
+$('#locateBtn').addEventListener('click', locateWithBestAccuracy);
 
 $('#trackBtn').addEventListener('click', () => {
   if (state.watchId !== null) {
@@ -489,7 +580,7 @@ $('#trackBtn').addEventListener('click', () => {
     return;
   }
   if (!navigator.geolocation) return alert('Geolocalización no disponible');
-  state.watchId = navigator.geolocation.watchPosition(p => updatePosition(p, false), geoError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 });
+  state.watchId = navigator.geolocation.watchPosition(p => updatePosition(p, false), geoError, { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 });
   $('#trackBtn').textContent = 'Detener seguimiento';
 });
 
