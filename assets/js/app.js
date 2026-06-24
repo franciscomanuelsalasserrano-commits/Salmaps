@@ -145,7 +145,7 @@ function waypointFor(type) {
   return WAYPOINTS.get(type) || LEGACY_WAYPOINTS[type] || WAYPOINTS.get('wp') || LEGACY_WAYPOINTS.friendly;
 }
 
-const MAP_VERSION = 'ign-online-speed-v22-pwa-install';
+const MAP_VERSION = 'ign-online-speed-v28-ultrafluid';
 const SPAIN_BOUNDS = L.latLngBounds([[25.0, -20.5], [45.2, 6.2]]);
 const IGN_LAYERS = {
   topo: {
@@ -291,12 +291,13 @@ function createIgnSingleImageRenderer() {
   }
 
   function bufferFor(reason, quality) {
-    // V18: carga más rápida. Se reduce la imagen inmediata y el detalle queda en segundo plano.
-    // La imagen actual sigue moviéndose debajo, así que no hace falta pedir tanto margen.
-    if (quality === 'detail') return reason === 'zoomend' ? 0.30 : 0.26;
-    if (reason === 'zoomend') return 0.18;
-    if (reason === 'layer-change' || reason === 'force-refresh') return 0.16;
-    return 0.14;
+    // V28: más fluidez. La capa rápida cubre más terreno alrededor del visor,
+    // así al mover el plano no hace falta pedir una imagen nueva por cada pequeño desplazamiento.
+    // La capa de detalle va con menos margen y se pide solo cuando el usuario deja el mapa quieto.
+    if (quality === 'detail') return reason === 'zoomend' ? 0.22 : 0.20;
+    if (reason === 'layer-change' || reason === 'force-refresh') return 0.34;
+    if (reason === 'zoomend') return 0.30;
+    return 0.42;
   }
 
   function bufferedPixelBounds(reason = 'view', quality = 'fast') {
@@ -320,18 +321,20 @@ function createIgnSingleImageRenderer() {
   function pixelSizeFromBounds(pb, quality = 'fast') {
     const cssWidth = Math.max(1, pb.max.x - pb.min.x);
     const cssHeight = Math.max(1, pb.max.y - pb.min.y);
-    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.25);
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 1.15);
 
-    // La primera carga es ligera para que aparezca antes.
-    // El detalle sube después si el usuario deja el plano quieto.
-    const targetScale = quality === 'detail' ? Math.min(dpr, 1.03) : 0.54;
-    const maxSide = quality === 'detail' ? 1850 : 1024;
-    const scale = Math.max(0.38, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
+    // V28: respuesta más rápida del IGN.
+    // 1) Imagen rápida muy ligera y con mucho margen para que aparezca antes y cubra el arrastre.
+    // 2) Imagen de detalle moderada, no excesiva, para evitar lag y saturación de red.
+    const targetScale = quality === 'detail' ? Math.min(dpr, 0.86) : 0.40;
+    const maxSide = quality === 'detail' ? 1320 : 780;
+    const minSide = quality === 'detail' ? 260 : 180;
+    const scale = Math.max(0.28, Math.min(targetScale, maxSide / cssWidth, maxSide / cssHeight));
     return {
       cssWidth,
       cssHeight,
-      width: Math.max(220, Math.round(cssWidth * scale)),
-      height: Math.max(220, Math.round(cssHeight * scale))
+      width: Math.max(minSide, Math.round(cssWidth * scale)),
+      height: Math.max(minSide, Math.round(cssHeight * scale))
     };
   }
 
@@ -345,12 +348,14 @@ function createIgnSingleImageRenderer() {
 
   function scheduleDetail(reason = 'detail') {
     clearTimeout(detailTimerLocal);
+    // V28: espera algo más antes del detalle. Si el usuario sigue moviendo,
+    // se cancela y no bloquea la nueva carga rápida.
     detailTimerLocal = setTimeout(() => {
       if (!map || !navigator.onLine) return;
       if (activeKey === activeMapKey && activeQuality !== 'detail') {
         render(false, reason, 'detail');
       }
-    }, 780);
+    }, reason === 'zoomend' ? 980 : 1250);
   }
 
   function addLoadedOverlay(url, overlayBounds, quality, cfg, id, key) {
@@ -411,8 +416,6 @@ function createIgnSingleImageRenderer() {
     setMapStatus(quality === 'detail'
       ? `Afinando ${cfg.label} z${map.getZoom().toFixed(1)}…`
       : `Cargando ${cfg.label} z${map.getZoom().toFixed(1)}…`);
-    console.info('[SECCION C2][IGN-WMS-SPEED-V22]', { reason, quality, key, zoom: map.getZoom(), pixelSize });
-
     // Cancela la imagen anterior si el usuario sigue moviendo/zoomando.
     // Esto evita que descargas viejas bloqueen la nueva capa.
     cancelLoadingImage();
@@ -437,7 +440,7 @@ function createIgnSingleImageRenderer() {
       if (img !== loadingImage || id !== requestId) return;
       loadingImage = null;
       loadingUrl = '';
-      console.warn('[SECCION C2][IGN-WMS-SPEED-V22] Error cargando plano', { quality, url });
+      console.warn('[TACNAV][IGN-WMS-V28] Error cargando plano', { quality, url });
       if (activeOverlay) setMapStatus('Se mantiene el plano anterior; reintentando…');
       else setMapStatus('Esperando plano IGN online…');
       if (quality === 'fast') {
@@ -469,11 +472,19 @@ function createIgnSingleImageRenderer() {
     render(true, 'layer-change', 'fast');
   }
 
-  return { render, schedule, setLayer, clear };
+  function abortPending(reason = 'interaction') {
+    clearTimeout(detailTimer);
+    clearTimeout(detailTimerLocal);
+    requestId++;
+    cancelLoadingImage();
+    if (reason === 'interaction' && activeOverlay) setMapStatus('Plano en memoria');
+  }
+
+  return { render, schedule, setLayer, clear, abortPending };
 }
 function refreshOnlineMap(force = false) {
   if (!ignRaster) return;
-  const delay = force ? 10 : 35;
+  const delay = force ? 0 : 70;
   ignRaster.schedule(force, delay, force ? 'force-refresh' : 'view-change');
 }
 
@@ -534,10 +545,13 @@ function initMap() {
 
   // Durante el movimiento no pedimos imágenes nuevas continuamente: el plano actual se desplaza.
   // Cuando el movimiento/zoom termina, se carga una imagen nueva si hace falta.
-  map.on('zoomstart movestart', () => setMapStatus('Plano en memoria'));
-  map.on('moveend', () => ignRaster?.schedule(false, 25, 'moveend'));
-  map.on('zoomend', () => ignRaster?.schedule(true, 15, 'zoomend'));
-  map.on('resize viewreset', () => ignRaster?.schedule(true, 25, 'resize'));
+  map.on('zoomstart movestart', () => {
+    ignRaster?.abortPending?.('interaction');
+    setMapStatus('Plano en memoria');
+  });
+  map.on('moveend', () => ignRaster?.schedule(false, 45, 'moveend'));
+  map.on('zoomend', () => ignRaster?.schedule(true, 35, 'zoomend'));
+  map.on('resize viewreset', () => ignRaster?.schedule(true, 55, 'resize'));
 
   // El triángulo de GPS no depende de las capas del plano: es HTML flotante encima del mapa.
   // Se recalcula en cualquier movimiento/zoom para que no desaparezca ni se quede desplazado.
