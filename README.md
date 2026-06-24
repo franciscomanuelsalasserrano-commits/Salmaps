@@ -1,15 +1,19 @@
-# Parche planos completos v2
+# Parche planos reset v1
 
-Sustituye estos archivos en tu proyecto:
+Sustituir estos archivos en el proyecto:
 
 - index.html
 - sw.js
 - assets/js/app.js
 - assets/css/styles.css
 
-Cambios:
-- Se elimina la imagen continua WMS que generaba franjas negras al alejar el zoom.
-- Se usa cartografía ráster IGN en TMS/teselas oficiales para que al abrir España y al acercar/alejar cargue el plano completo visible.
-- Se mantiene solo IGN topográfico y PNOA.
-- Se elimina el segundo triángulo azul: queda solo el marcador GPS real de Leaflet.
-- Se elimina el aviso de carga.
+Sistema de mapas rehecho desde cero:
+
+- Sin teselas visibles.
+- Sin OSM.
+- Sin Esri.
+- Solo IGN topográfico militar y PNOA aérea.
+- Imagen base completa de España siempre debajo.
+- Imagen de detalle por vista que se recarga al mover, ampliar y alejar.
+- Mantiene la imagen anterior mientras se carga la nueva para evitar negro/gris.
+- Un solo marcador GPS triangular.
