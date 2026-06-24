@@ -1,14 +1,14 @@
-# Parche SECCIÓN C2 - planos IGN fluidos v16
+# Parche SECCIÓN C2 — planos IGN más rápidos
 
-Este parche mantiene el sistema de planos online del IGN, pero cambia la forma de pintarlos para que el movimiento y el zoom vayan más fluidos.
+Este parche mantiene el sistema WMS online del IGN que ya funcionaba, pero lo optimiza para que cargue antes al mover o hacer zoom.
 
-Incluye:
-- IGN topográfico online.
-- IGN vista aérea PNOA online.
-- Sin OSM y sin Esri.
-- Sin tiles/cuadrados visibles.
-- El plano WMS se carga como imagen georreferenciada, no como imagen fija de pantalla.
-- Al mover el mapa, la imagen actual se desplaza con el mapa y solo se solicita otra cuando hace falta.
-- Al hacer zoom, mantiene la imagen anterior escalada mientras carga la nueva imagen de detalle.
-- Se precarga una zona extra alrededor de la pantalla para reducir tirones al mover.
-- CSS actualizado para evitar fondos grises o capas antiguas tapando el plano.
+Cambios:
+- Primera carga rápida con imagen WMS ligera.
+- Segunda carga de detalle automática cuando el mapa queda quieto.
+- Menos tamaño de petición al IGN para reducir espera.
+- Sin tiles/cuadrados, sin OSM y sin Esri.
+- Mantiene solo IGN topográfico y PNOA aérea.
+- Se mantiene el plano anterior mientras entra el nuevo.
+- Service Worker v17 para limpiar cachés anteriores.
+
+Sustituir: `index.html`, `sw.js`, `assets/js/app.js`, `assets/css/styles.css`.
