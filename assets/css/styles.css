@@ -25,3 +25,16 @@
 
 .leaflet-image-layer.ign-wms-fast{filter:none!important}
 .leaflet-image-layer.ign-wms-detail{filter:none!important}
+
+
+/* V19 GPS: triángulo azul siempre por encima de todas las capas del plano */
+.leaflet-accuracy-pane{z-index:640!important;pointer-events:none!important}
+.leaflet-gps-pane{z-index:2000!important;pointer-events:none!important}
+.leaflet-gps-pane .leaflet-marker-icon,
+.gps-triangle-icon,
+.gps-triangle-top{z-index:2147483647!important;pointer-events:none!important;background:transparent!important;border:0!important}
+.gps-triangle{position:relative!important;width:44px!important;height:44px!important;transform:rotate(var(--heading))!important;filter:drop-shadow(0 3px 7px rgba(0,0,0,.85))!important;will-change:transform!important}
+.gps-triangle::before{content:""!important;position:absolute!important;left:8px!important;top:1px!important;width:0!important;height:0!important;border-left:14px solid transparent!important;border-right:14px solid transparent!important;border-bottom:36px solid #0b84ff!important;transform-origin:50% 62%!important}
+.gps-triangle::after{content:""!important;position:absolute!important;left:17px!important;top:17px!important;width:10px!important;height:10px!important;background:#fff!important;border:2px solid #0b84ff!important;border-radius:50%!important;box-shadow:0 0 0 2px rgba(0,0,0,.25)!important}
+.gps-triangle span{position:absolute!important;left:6px!important;top:0!important;width:32px!important;height:40px!important;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)!important;border:2px solid #fff!important}
+#locateBtn:disabled{opacity:.75;cursor:wait}
